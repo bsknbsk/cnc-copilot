@@ -14,3 +14,12 @@ export const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || 'biju0716@gmail.com')
 
 export const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 export const PORT = parseInt(process.env.PORT || '3000', 10);
+export const APP_URL = process.env.APP_URL || 'https://cnc-copilot-857267445589.asia-south1.run.app';
+export const CORS_ALLOWLIST = [
+  APP_URL,
+  'https://cnc-copilot-857267445589.asia-south1.run.app',
+  'http://localhost:3000',
+  'http://localhost:8080',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:8080',
+].filter(Boolean);

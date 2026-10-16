@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { PORT } from './server/config.js';
+import { PORT, CORS_ALLOWLIST } from './server/config.js';
 import { healthRouter } from './server/routes/health.js';
 import { userRouter } from './server/routes/user.js';
 import { explainRouter } from './server/routes/explain.js';
@@ -13,6 +13,22 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && CORS_ALLOWLIST.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 

@@ -4,3 +4,4 @@ docs/baseline
 .git
 dist
 dist-server
+package-lock.json
