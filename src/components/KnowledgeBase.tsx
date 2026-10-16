@@ -53,12 +53,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 4;
 
-  // Simulator state
-  const [simQuery, setSimQuery] = useState('');
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simLatency, setSimLatency] = useState('0');
-  const [activeChunks, setActiveChunks] = useState<ChunkItem[]>([]);
-
   // Modals & inspect
   const [inspectDoc, setInspectDoc] = useState<KBDocument | null>(null);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -153,55 +147,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
     return filteredDocs.slice(start, start + itemsPerPage);
   }, [filteredDocs, currentPage]);
 
-  // Initial simulation chunks
-  useEffect(() => {
-    setActiveChunks([]);
-  }, [documents]);
-
-  // Execute RAG simulator search
-  const handleRunSimulation = async () => {
-    if (!simQuery.trim()) return;
-    setIsSimulating(true);
-    const start = performance.now();
-    try {
-      const res = await apiFetch('/api/kb/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: simQuery.trim(),
-          controller: controllerFilter === 'all' ? 'generic' : controllerFilter,
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Simulation failed');
-      }
-
-      const data = await res.json();
-      const latency = Math.round(performance.now() - start);
-      setSimLatency(`${latency}ms`);
-
-      if (Array.isArray(data.chunks)) {
-        const mappedChunks: ChunkItem[] = data.chunks.map((c: any, idx: number) => ({
-          id: `sim-chunk-${idx}`,
-          section: c.documentName || 'OEM Manual',
-          page: c.pageNumber || 1,
-          matchScore: c.matchScore || Math.max(98 - idx * 6, 75),
-          tokens: Math.round((c.snippet || '').length / 4),
-          snippet: c.snippet || '',
-        }));
-        setActiveChunks(mappedChunks);
-      } else {
-        setActiveChunks([]);
-      }
-    } catch (err: any) {
-      console.error('[KnowledgeBase] Simulation error:', err);
-      setActiveChunks([]);
-    } finally {
-      setIsSimulating(false);
-    }
-  };
-
   // Upload document handler
   const handleCreateDocument = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -289,7 +234,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
       <div className="w-full px-margin py-margin">
         <div className="flex flex-col w-full">
           {/* Top Stats & Metric Banner */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-gutter mb-space-lg">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-gutter mb-space-lg">
             <Card className="p-space-md flex flex-col justify-between">
               <SectionHeader title="Indexed Documents" icon="library_books" className="border-b-0 mb-0 pb-0" />
               <div className="flex items-baseline gap-space-xs mt-2">
@@ -309,24 +254,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               </div>
               <ProgressBar progress={totalDocs > 0 ? 100 : 0} variant="primary" />
             </Card>
-
-            <Card className="p-space-md flex flex-col justify-between">
-              <SectionHeader title="Avg Retrieval" icon="bolt" className="border-b-0 mb-0 pb-0" />
-              <div className="flex items-baseline gap-space-xs mt-2">
-                <span className="font-code-lg text-headline-xl font-bold text-on-surface">--</span>
-                <span className="font-label-sm text-label-sm text-tertiary font-mono">ms</span>
-              </div>
-              <ProgressBar progress={0} variant="tertiary" />
-            </Card>
-
-            <Card className="p-space-md flex flex-col justify-between">
-              <SectionHeader title="OCR Accuracy" icon="verified" className="border-b-0 mb-0 pb-0" />
-              <div className="flex items-baseline gap-space-xs mt-2">
-                <span className="font-code-lg text-headline-xl font-bold text-on-surface">--</span>
-                <span className="font-label-sm text-label-sm text-secondary font-mono">Precision</span>
-              </div>
-              <ProgressBar progress={0} variant="secondary" />
-            </Card>
           </div>
 
           {/* Page Title & Section Header */}
@@ -342,9 +269,9 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               }
             />
           </section>
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-lg items-start">
-            {/* LEFT COLUMN: Explorer & Table (70% -> lg:col-span-8) */}
-            <div className="lg:col-span-8 flex flex-col gap-space-md">
+          <div className="grid grid-cols-1 gap-space-lg items-start">
+            {/* Explorer & Table (full width) */}
+            <div className="flex flex-col gap-space-md">
               {/* Action Controls Bar */}
               <Card className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-space-md p-space-sm">
                 {/* Search & Filter Controls */}
@@ -411,8 +338,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                     Drag & Drop OEM Manuals, Fanuc Parameter Sheets, or Machine Logs
                   </span>
                   <p className="font-body-md text-body-md text-tertiary">
-                    Supports PDF, STEP/DXF notes, DOCX, and CSV tables up to 150MB. OCR and technical tabular parsing
-                    automatically enabled.
+                    Supports PDF, DOCX, XLSX, CSV, TXT, PNG and JPG files up to 50MB. Indexed with Gemini File Search.
                   </p>
                   <div className="flex items-center gap-space-xs mt-2 px-space-sm py-1 rounded bg-surface-container-lowest text-tertiary-container font-label-sm text-label-sm font-mono">
                     <span className="material-symbols-outlined text-[14px]">shield</span>
@@ -420,6 +346,33 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   </div>
                 </div>
               </div>
+
+              {/* Indexing Status Notice */}
+              {indexingDocs.length > 0 ? (
+                <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm border border-primary-container/30">
+                  <span className="material-symbols-outlined text-primary-container text-[24px]">sync_problem</span>
+                  <div className="flex flex-col">
+                    <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">
+                      {indexingDocs.length} Background Ingestion Job{indexingDocs.length > 1 ? 's' : ''}
+                    </span>
+                    <span className="font-body-sm text-body-sm text-tertiary">
+                      {indexingDocs[0].name} is being indexed in Gemini File Search.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm">
+                  <span className="material-symbols-outlined text-secondary text-[24px]">verified</span>
+                  <div className="flex flex-col">
+                    <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">
+                      All Corpora Synchronized
+                    </span>
+                    <span className="font-body-sm text-body-sm text-tertiary">
+                      Gemini File Search index up to date with active shop standards.
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Documents Inventory Table */}
               <Card className="overflow-hidden flex flex-col">
@@ -521,7 +474,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                               {docItem.status === 'Indexing' && (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary-container/20 text-primary-container font-label-sm text-label-sm font-mono">
                                   <span className="material-symbols-outlined text-[14px] animate-spin">sync</span>
-                                  Indexing ({docItem.progress || 82}%)
+                                  Indexing{docItem.progress ? ` (${docItem.progress}%)` : ''}
                                 </span>
                               )}
                               {(docItem.status === 'Error' || docItem.status === 'Failed') && (
@@ -613,159 +566,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   </div>
                 </div>
               </Card>
-            </div>
-
-            {/* RIGHT COLUMN: RAG Test Retrieval Simulator (30% -> lg:col-span-4) */}
-            <div className="lg:col-span-4 flex flex-col gap-space-md sticky top-20">
-              {/* Simulator Glass Card */}
-              <div className="bg-surface-container p-space-md rounded-xl shadow-xl flex flex-col gap-space-md relative overflow-hidden">
-                {/* Subtle Glow Decal in Corner */}
-                <div className="absolute -right-12 -top-12 w-32 h-32 bg-secondary/10 rounded-full blur-2xl pointer-events-none" />
-
-                {/* Header with Vector DB Indicator */}
-                <div className="flex flex-col gap-space-xs">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-headline-md text-headline-md text-on-surface font-semibold flex items-center gap-space-xs">
-                      <span className="material-symbols-outlined text-secondary text-[22px]">troubleshoot</span>
-                      <span>RAG Test Simulator</span>
-                    </h3>
-                    <span className="px-2 py-0.5 rounded bg-surface-container-high font-label-sm text-label-sm font-mono text-secondary">
-                      LIVE
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-tertiary-container font-label-sm text-label-sm font-mono">
-                    <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                    <span>Vector DB: Gemini File Search</span>
-                  </div>
-                </div>
-
-                {/* Query Input Block */}
-                <div className="flex flex-col gap-space-xs">
-                  <label className="font-label-sm text-label-sm uppercase font-mono text-tertiary">
-                    Diagnostic Prompt Simulation
-                  </label>
-                  <div className="relative bg-surface-container-lowest rounded-lg p-2.5 focus-within:ring-1 focus-within:ring-secondary">
-                    <textarea
-                      value={simQuery}
-                      onChange={(e) => setSimQuery(e.target.value)}
-                      className="w-full bg-transparent border-0 outline-none text-on-surface font-code-sm text-code-sm resize-none focus:outline-none"
-                      id="rag-query-input"
-                      rows={3}
-                      placeholder="Enter CNC symptom, alarm code, or parameter query..."
-                    />
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-surface-container-high">
-                      <span className="font-label-sm text-label-sm font-mono text-tertiary-container">
-                        Cosine Sim: Top K=3
-                      </span>
-                      <button
-                        onClick={handleRunSimulation}
-                        disabled={isSimulating || !simQuery.trim()}
-                        className="px-space-sm py-1 bg-secondary text-surface-container-lowest font-label-sm text-label-sm font-bold font-mono rounded flex items-center gap-1 hover:bg-secondary-fixed transition-colors cursor-pointer disabled:opacity-75"
-                        id="rag-run-btn"
-                      >
-                        <span>{isSimulating ? 'SIMULATING...' : 'SIMULATE'}</span>
-                        <span className="material-symbols-outlined text-[14px]">send</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Retrieval Results Header */}
-                <div className="flex items-center justify-between pt-2">
-                  <span className="font-label-sm text-label-sm uppercase font-mono text-tertiary">
-                    Retrieved Chunks (HNSW Ranked)
-                  </span>
-                  <span className="font-label-sm text-label-sm font-mono text-secondary">
-                    Latency: {simLatency || '--'}
-                  </span>
-                </div>
-
-                {/* Retrieved Chunks Stack */}
-                <div className="flex flex-col gap-space-sm" id="retrieval-results-stack">
-                  {activeChunks.length === 0 ? (
-                    <EmptyState 
-                      icon="ads_click"
-                      title="Upload a manual to test retrieval."
-                      description="Connect your technical documentation to test semantic search."
-                    />
-                  ) : (
-                    activeChunks.map((chunk, idx) => (
-                      <Card 
-                        key={chunk.id || idx}
-                        className="p-space-sm flex flex-col gap-space-xs hover:bg-surface-container-high transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-space-xs">
-                          <div className="flex flex-col">
-                            <span className="font-headline-sm text-body-md text-on-surface font-semibold">
-                              {idx === 0
-                                ? 'Primary Context'
-                                : idx === 1
-                                ? 'Secondary Reference'
-                                : 'Supporting Fragment'}
-                            </span>
-                            <span className="font-code-sm text-label-sm text-tertiary font-mono">
-                              {chunk.section}
-                            </span>
-                          </div>
-                          <Badge variant={idx === 0 ? 'secondary' : 'tertiary'}>
-                            {chunk.matchScore}% MATCH
-                          </Badge>
-                        </div>
-                        <div className="bg-surface-container-lowest p-space-sm rounded font-code-sm text-code-sm text-tertiary-fixed leading-relaxed font-mono">
-                          {chunk.snippet}
-                        </div>
-                        <div className="flex items-center justify-between text-tertiary font-label-sm text-label-sm font-mono pt-1">
-                          <span>Token Count: {chunk.tokens}</span>
-                          <button
-                            onClick={() => {
-                              const found = documents.find((d) => (d.chunks || []).some((c) => c.id === chunk.id));
-                              if (found) setInspectDoc(found);
-                              else if (documents[0]) setInspectDoc(documents[0]);
-                            }}
-                            className="hover:text-secondary flex items-center gap-0.5 cursor-pointer text-[10px]"
-                          >
-                            <span>View In Context</span>
-                            <span className="material-symbols-outlined text-[12px]">open_in_new</span>
-                          </button>
-                        </div>
-                      </Card>
-                    ))
-                  )}
-                </div>
-
-                {/* Telemetry Summary Bar */}
-                <div className="p-space-sm rounded-lg bg-surface-container-lowest flex items-center justify-between font-mono font-label-sm text-label-sm text-tertiary">
-                  <span>Embedding Model: Gemini File Search</span>
-                  <span className="text-secondary font-bold">Grounding: Active</span>
-                </div>
-              </div>
-
-              {/* Quick Indexing Audit Notice */}
-              {indexingDocs.length > 0 ? (
-                <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm border border-primary-container/30">
-                  <span className="material-symbols-outlined text-primary-container text-[24px]">sync_problem</span>
-                  <div className="flex flex-col">
-                    <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">
-                      {indexingDocs.length} Background Ingestion Job
-                    </span>
-                    <span className="font-body-sm text-body-sm text-tertiary">
-                      {indexingDocs[0].name} is {indexingDocs[0].progress || 82}% indexed. ETA: 4m 12s.
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm">
-                  <span className="material-symbols-outlined text-secondary text-[24px]">verified</span>
-                  <div className="flex flex-col">
-                    <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">
-                      All Corpora Synchronized
-                    </span>
-                    <span className="font-body-sm text-body-sm text-tertiary">
-                      Gemini File Search index up to date with active shop standards.
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>

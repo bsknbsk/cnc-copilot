@@ -2,11 +2,8 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { adminDb, adminStorage } from '../firebase.js';
-import { MODEL_FLASH } from '../config.js';
-import { getGemini, executeWithRetry, getFriendlyErrorMessage } from '../geminiClient.js';
+import { getGemini } from '../geminiClient.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
-import { rateLimitAI } from '../rateLimiter.js';
-import { logAIRequest } from '../logger.js';
 
 export const kbRouter = Router();
 
@@ -254,95 +251,4 @@ kbRouter.delete('/:docId', requireAuth, requireAdmin, async (req: Request, res: 
   }
 
   res.json({ success: true, docId });
-});
-
-// RAG test simulation endpoint
-kbRouter.post('/test', requireAuth, rateLimitAI, async (req: Request, res: Response) => {
-  const { query, controller } = req.body;
-  if (!query || typeof query !== 'string' || !query.trim()) {
-    res.status(400).json({ error: 'invalid_query', message: 'Query string is required' });
-    return;
-  }
-
-  const startTime = Date.now();
-  const ctrl = (controller || 'generic').toLowerCase();
-  const normalizedCtrl = ctrl.includes('fanuc') ? 'fanuc' : ctrl.includes('mitsubishi') ? 'mitsubishi' : 'generic';
-
-  try {
-    const storeName = await getFileSearchStoreName();
-    const ai = getGemini();
-
-    const metadataFilter = `controller == "${normalizedCtrl}" || controller == "generic"`;
-
-    const response = await executeWithRetry(() =>
-      ai.models.generateContent({
-        model: MODEL_FLASH,
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: `Search uploaded manuals for: ${query.trim()}` }],
-          },
-        ],
-        config: {
-          systemInstruction: 'You are a technical document retrieval system. Return findings grounded only in the uploaded manuals. If nothing is found, state that clearly.',
-          tools: [
-            {
-              fileSearch: {
-                fileSearchStoreNames: [storeName],
-                metadataFilter,
-              },
-            },
-          ],
-        },
-      })
-    );
-
-    const latencyMs = Date.now() - startTime;
-    const candidate = response.candidates?.[0];
-    const grounding = candidate?.groundingMetadata;
-    const chunks: Array<{
-      documentName: string;
-      pageNumber: number | null;
-      snippet: string;
-      matchScore: number;
-    }> = [];
-
-    if (grounding?.groundingChunks && Array.isArray(grounding.groundingChunks)) {
-      grounding.groundingChunks.forEach((chunk, idx) => {
-        if (chunk.retrievedContext) {
-          chunks.push({
-            documentName: chunk.retrievedContext.title || 'OEM Manual',
-            pageNumber: chunk.retrievedContext.pageNumber ?? null,
-            snippet: (chunk.retrievedContext.text || '').trim(),
-            matchScore: Math.max(98 - idx * 6, 75),
-          });
-        }
-      });
-    }
-
-    logAIRequest({
-      route: '/api/kb/test',
-      uid: req.user?.uid,
-      controller: normalizedCtrl,
-      language: req.user?.preferredLanguage || 'en',
-      model: MODEL_FLASH,
-      promptTokens: response.usageMetadata?.promptTokenCount || 0,
-      outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
-      latencyMs,
-      citationCount: chunks.length,
-      toolNames: ['fileSearch'],
-    });
-
-    res.json({
-      chunks,
-      latencyMs,
-      answer: candidate?.content?.parts?.[0]?.text || '',
-    });
-  } catch (err: any) {
-    console.error(JSON.stringify({ level: 'error', route: 'POST /api/kb/test', error: err?.message || String(err) }));
-    res.status(500).json({
-      error: 'retrieval_failed',
-      message: getFriendlyErrorMessage(req.user?.preferredLanguage || 'en'),
-    });
-  }
 });
