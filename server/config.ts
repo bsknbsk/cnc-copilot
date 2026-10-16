@@ -1,7 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-export const MODEL_FLASH = 'gemini-3.8-flash';
+export const MODEL_FLASH = 'gemini-3.5-flash';
 export const MODEL_PRO = 'gemini-3.1-pro-preview';
 export const MODEL_TTS = 'gemini-3.8-flash-tts';
 
