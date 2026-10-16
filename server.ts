@@ -7,6 +7,7 @@ import { userRouter } from './server/routes/user.js';
 import { explainRouter } from './server/routes/explain.js';
 import { agentRouter } from './server/routes/agent.js';
 import { academyRouter } from './server/routes/academy.js';
+import { ttsRouter } from './server/routes/tts.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +39,7 @@ async function startServer() {
   app.use('/api', academyRouter);
   app.use('/api/user', userRouter);
   app.use('/api/agent', agentRouter);
+  app.use('/api', ttsRouter);
 
   const isDev = process.env.NODE_ENV !== 'production';
 

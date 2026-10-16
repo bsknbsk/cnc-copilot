@@ -97,6 +97,17 @@ export function ShopfloorAgent({
     snippet: string;
   } | null>(null);
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
+  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const pathsToFetch = messages
@@ -448,6 +459,63 @@ export function ShopfloorAgent({
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
+  const handlePlayAnswer = async (msg: ChatMessage) => {
+    if (playingMessageId === msg.id) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      setPlayingMessageId(null);
+      return;
+    }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    setPlayingMessageId(msg.id);
+
+    try {
+      const res = await apiFetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messageId: msg.id,
+          text: msg.text,
+          language: profile?.preferredLanguage || 'en',
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`TTS failed with status ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (!data.audioUrl) {
+        throw new Error('No audio URL returned');
+      }
+
+      const audio = new Audio(data.audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setPlayingMessageId((current) => (current === msg.id ? null : current));
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        setPlayingMessageId((current) => (current === msg.id ? null : current));
+        audioRef.current = null;
+      };
+
+      await audio.play();
+    } catch (err: any) {
+      console.error(JSON.stringify({ action: 'playAnswer', error: err?.message || String(err) }));
+      setPlayingMessageId(null);
+    }
+  };
+
   return (
     <div className="w-full px-margin py-margin">
       <div className="flex flex-col w-full">
@@ -644,9 +712,23 @@ export function ShopfloorAgent({
                         {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Now'}
                       </span>
                       {msg.role === 'model' && (
-                        <Badge variant="secondary">
-                          {activeController.split(' ')[0]} Verified
-                        </Badge>
+                        <>
+                          <Badge variant="secondary">
+                            {activeController.split(' ')[0]} Verified
+                          </Badge>
+                          {playingMessageId === msg.id ? (
+                            <div className="w-7 h-7 rounded bg-surface-container flex items-center justify-center p-0.5 shadow-sm animate-pulse" title="Playing answer">
+                              <div className="w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin" />
+                            </div>
+                          ) : (
+                            <IconButton
+                              icon="volume_up"
+                              title="Play answer"
+                              onClick={() => handlePlayAnswer(msg)}
+                              className="w-9 h-9 min-w-0 min-h-0"
+                            />
+                          )}
+                        </>
                       )}
                     </div>
 
