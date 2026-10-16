@@ -36,8 +36,13 @@ export interface ChatMessage {
   imageUrl?: string | null;
   citations?: Array<{
     documentName: string;
-    pageNumber: number;
+    pageNumber?: number | null;
     snippet: string;
+  }> | null;
+  toolCalls?: Array<{
+    name: string;
+    args: any;
+    result: any;
   }> | null;
   createdAt?: string | null;
   reasoning?: string | null; // For Diagnostic Reasoning Chain
@@ -85,6 +90,35 @@ export function ShopfloorAgent({
       ? 'Generic ISO'
       : 'Fanuc 0i-MF'
   );
+
+  const [selectedCitation, setSelectedCitation] = useState<{
+    documentName: string;
+    pageNumber?: number | null;
+    snippet: string;
+  } | null>(null);
+  const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const pathsToFetch = messages
+      .filter((m) => m.imageUrl && m.imageUrl.startsWith('chats/') && !signedImageUrls[m.imageUrl])
+      .map((m) => m.imageUrl as string);
+
+    if (pathsToFetch.length === 0) return;
+
+    pathsToFetch.forEach(async (path) => {
+      try {
+        const res = await apiFetch(`/api/agent/image?path=${encodeURIComponent(path)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url) {
+            setSignedImageUrls((prev) => ({ ...prev, [path]: data.url }));
+          }
+        }
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Failed to fetch signed URL:', err);
+      }
+    });
+  }, [messages, signedImageUrls]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -191,6 +225,7 @@ export function ShopfloorAgent({
             text: d.text || '',
             imageUrl: d.imageUrl || null,
             citations: Array.isArray(d.citations) ? d.citations : null,
+            toolCalls: Array.isArray(d.toolCalls) ? d.toolCalls : null,
             createdAt: d.createdAt || null,
             reasoning: d.reasoning || null,
             confidence: d.confidence || null,
@@ -374,6 +409,7 @@ export function ShopfloorAgent({
           role: 'model',
           text: data.reply || 'Diagnostic complete.',
           citations: data.citations || null,
+          toolCalls: data.toolCalls || null,
           createdAt: new Date().toISOString(),
           confidence: data.confidence ?? null,
           faultType: data.faultType ?? null,
@@ -623,7 +659,7 @@ export function ShopfloorAgent({
                               <span className="truncate max-w-[100px]">PENDANT_SNAP.RAW</span>
                             </div>
                             <div className="h-28 w-full bg-surface-container-lowest rounded overflow-hidden shadow-inner relative group">
-                              <img src={msg.imageUrl} alt="Pendant Snapshot" className="w-full h-full object-cover opacity-60 grayscale hover:opacity-100 transition-all duration-300" />
+                              <img src={(msg.imageUrl && signedImageUrls[msg.imageUrl]) || msg.imageUrl} alt="Pendant Snapshot" className="w-full h-full object-cover opacity-60 grayscale hover:opacity-100 transition-all duration-300" />
                               <div className="absolute inset-0 flex flex-col p-2 font-mono text-[10px] leading-tight justify-between pointer-events-none">
                                 <div className="flex justify-between text-error font-bold bg-black/40 px-1 rounded">
                                   <span>{activeController.toUpperCase()}</span>
@@ -682,16 +718,50 @@ export function ShopfloorAgent({
                           <div className="pt-2 flex flex-wrap items-center gap-2">
                             <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
                             {msg.citations.map((c, i) => (
-                              <span key={i} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono">
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => setSelectedCitation(c)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
+                              >
                                 <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                {c.documentName} p.{c.pageNumber}
-                              </span>
+                                {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
+                              </button>
                             ))}
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-primary-container/10 text-primary font-label-sm text-label-sm font-mono">
                               <span className="material-symbols-outlined text-[14px]">functions</span>
                               Kinematic Physics Model
                             </span>
                           </div>
+                        )}
+
+                        {/* Collapsible How I got this row */}
+                        {msg.toolCalls && msg.toolCalls.length > 0 && (
+                          <details className="group bg-surface-container-lowest rounded-lg p-3 transition-all [&_summary::-webkit-details-marker]:hidden">
+                            <summary className="flex items-center justify-between cursor-pointer select-none text-tertiary hover:text-on-surface">
+                              <div className="flex items-center gap-2 font-label-sm text-label-sm font-mono uppercase text-secondary">
+                                <span className="material-symbols-outlined text-[16px] group-open:rotate-90 transition-transform">terminal</span>
+                                <span>How I got this ({msg.toolCalls.length})</span>
+                              </div>
+                              <span className="material-symbols-outlined text-[16px] group-open:rotate-180 transition-transform">expand_more</span>
+                            </summary>
+                            <div className="mt-3 pt-3 border-t border-surface-container font-mono text-body-sm text-tertiary space-y-2 leading-relaxed">
+                              {msg.toolCalls.map((tc, idx) => (
+                                <div key={idx} className="p-2 rounded bg-surface-container text-secondary text-label-sm">
+                                  <div className="font-bold text-on-surface flex items-center gap-1.5">
+                                    <span className="material-symbols-outlined text-[14px]">functions</span>
+                                    <span>{tc.name}</span>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-tertiary font-mono">
+                                    <strong>Args:</strong> {JSON.stringify(tc.args)}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-on-surface font-mono">
+                                    <strong>Result:</strong> {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result)}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
                         )}
 
                         {/* Physics Diagnostic Reasoning Chain (Interactive Details) */}
@@ -831,6 +901,39 @@ export function ShopfloorAgent({
           </section>
         </div>
       </div>
+
+      {/* Citation Inspection Drawer */}
+      <Drawer
+        isOpen={Boolean(selectedCitation)}
+        onClose={() => setSelectedCitation(null)}
+        title="Verified OEM Manual Citation"
+      >
+        {selectedCitation && (
+          <div className="space-y-4 font-mono">
+            <div>
+              <span className="text-tertiary-container font-label-sm text-label-sm uppercase tracking-wider block mb-1">Document</span>
+              <h3 className="font-headline-sm text-on-surface font-bold text-base flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary text-[18px]">menu_book</span>
+                {selectedCitation.documentName}
+              </h3>
+            </div>
+            {selectedCitation.pageNumber ? (
+              <div>
+                <span className="text-tertiary-container font-label-sm text-label-sm uppercase tracking-wider block mb-1">Page Reference</span>
+                <span className="inline-block px-2 py-0.5 rounded bg-surface-container text-secondary text-xs font-bold">
+                  Page {selectedCitation.pageNumber}
+                </span>
+              </div>
+            ) : null}
+            <div>
+              <span className="text-tertiary-container font-label-sm text-label-sm uppercase tracking-wider block mb-1">Retrieved Passage / Snippet</span>
+              <div className="p-3 bg-surface-container rounded-lg text-xs text-on-surface leading-relaxed whitespace-pre-wrap border border-outline-variant/20">
+                {selectedCitation.snippet}
+              </div>
+            </div>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

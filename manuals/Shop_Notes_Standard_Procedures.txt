@@ -1,0 +1,23 @@
+CNC SHOP FLOOR NOTES & PROCEDURES
+Document: Shop Notes - Alarm Procedures
+Document Code: SHOP-NOTES-2026
+Controllers: Fanuc, Mitsubishi, Generic
+
+1. Alarm: SV0401 (Servo Axis Overcurrent)
+Controller: Mitsubishi M80 / Fanuc 0i-MF
+Description: Excessive current detected in the servo power module or servo motor windings.
+Diagnostic Protocol:
+Step 1: Press EMERGENCY STOP and shut off main circuit breaker.
+Step 2: Inspect ballscrew and axis guideways for physical chip packing or mechanical obstruction.
+Step 3: Disconnect motor power cables (U, V, W) at amplifier and check winding resistance with a micro-ohmmeter. Values must be balanced across all three phases.
+Step 4: Check phase-to-ground insulation resistance using a 500V insulation tester; minimum resistance is 100 Megohms.
+Step 5: Verify amplifier heat sink cooling fan operation and clean dust filter.
+Step 6: If cables and motor verify normal, replace the servo amplifier drive module.
+
+2. Alarm: SP9012 (Spindle Motor Overload)
+Controller: Fanuc 0i-MF
+Description: Motor temperature sensor detected thermal overload exceeding continuous rated duty cycle.
+Diagnostic Protocol:
+Step 1: Check cutting load meter on CNC diagnostic screen during roughing passes; reduce depth of cut (ap) or feed rate if load exceeds 110%.
+Step 2: Verify spindle chiller coolant temperature (target: 20-22 deg C) and fluid level.
+Step 3: Allow spindle motor to idle cool for at least 15 minutes before restarting cycle.
