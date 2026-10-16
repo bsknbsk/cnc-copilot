@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { adminDb } from '../firebase.js';
-import { getGemini, executeWithRetry } from '../geminiClient.js';
+import { getGemini, executeWithRetry, getFriendlyErrorMessage } from '../geminiClient.js';
 import { MODEL_FLASH } from '../config.js';
 import { parseAndVerifyGCode } from '../../src/engine/gcode.js';
-import { checkCollision, ACADEMY_MISSIONS } from '../../src/engine/crash.js';
+import { checkCollision, ACADEMY_MISSIONS, calculateMissionXP, calculateLevel } from '../../src/engine/crash.js';
 import { requireAuth, requireAdmin } from '../authMiddleware.js';
 import { rateLimitAI } from '../rateLimiter.js';
+import { logAIRequest } from '../logger.js';
 
 export const academyRouter = Router();
 
@@ -80,25 +81,57 @@ academyRouter.get('/academy/stats', requireAuth, requireAdmin, async (req: any, 
 
 // POST /api/instructor
 academyRouter.post('/instructor', requireAuth, rateLimitAI, async (req: any, res) => {
-  const { missionId, message, context } = req.body;
+  const startTime = Date.now();
+  const {
+    missionId,
+    program,
+    crashEvent,
+    hintLevel = 1,
+    language = 'en',
+    question,
+    message,
+    context,
+  } = req.body;
+  const user = req.user!;
+
+  const effectiveQuestion = question || message;
+  const rawLevel = typeof hintLevel === 'number' ? hintLevel : (context?.hintsRevealed || 1);
+  const effectiveHintLevel = Math.max(1, Math.min(3, rawLevel));
 
   const mission = ACADEMY_MISSIONS.find((m) => m.id === missionId);
   if (!mission) {
-    return res.status(404).json({ error: 'Mission not found' });
+    return res.status(404).json({ error: 'mission_not_found', message: 'Mission not found' });
   }
 
-  const prompt = `
-    You are a CNC Academy Instructor in a "Crash Lab". 
-    The student is working on the mission: "${mission.name}".
-    Scenario: ${mission.description}
-    Fault: ${mission.faultDescription}
-    Student Message: "${message}"
-    Hints revealed so far: ${context?.hintsRevealed || 0} of 3.
-    
-    Keep your response short, industrial, and helpful. 
-    Don't give the answer directly, but guide them to look at the specific G-code block that causes the crash.
-    Use professional CNC terminology.
-  `;
+  const levelInstructions: Record<number, string> = {
+    1: 'Level 1: Ask a guiding question that helps the operator identify the mistake without telling them what it is.',
+    2: 'Level 2: Point directly to the specific line number and explain the CNC concept or rule that was violated, without providing the exact code fix.',
+    3: 'Level 3: Provide ONLY the single corrected line of G-code. Never provide the full program.',
+  };
+
+  const prompt = `You are a CNC Academy Instructor in a "Crash Lab".
+The student is working on the mission: "${mission.name}".
+Scenario: ${mission.description}
+Fault context: ${mission.faultDescription}
+
+Current G-code program:
+\`\`\`gcode
+${program || mission.initialCode}
+\`\`\`
+
+Crash Event: ${crashEvent ? `${crashEvent.type}: ${crashEvent.description} at line ${crashEvent.line}. Root cause: ${crashEvent.rootCause}` : 'No crash event triggered yet.'}
+${effectiveQuestion ? `Student Question: "${effectiveQuestion}"` : ''}
+
+Hint Tier: ${effectiveHintLevel} (1-3)
+Instruction for Hint Tier ${effectiveHintLevel}:
+${levelInstructions[effectiveHintLevel]}
+
+Constraints:
+- Never output the full program.
+- In Level 1, ask a guiding question only.
+- In Level 2, point to the line and concept only.
+- In Level 3, provide only the single corrected line.
+- Reply in ${language}. Keep standard G-code notation unchanged.`;
 
   try {
     const ai = getGemini();
@@ -107,12 +140,31 @@ academyRouter.post('/instructor', requireAuth, rateLimitAI, async (req: any, res
         model: MODEL_FLASH,
         contents: prompt,
       });
-    });
+    }, language);
+
+    const latencyMs = Date.now() - startTime;
     const reply = response.text || 'Instructor response unavailable.';
+
+    logAIRequest({
+      route: '/api/instructor',
+      uid: user.uid,
+      controller: user.preferredController || 'generic',
+      language,
+      toolNames: ['academy_instructor'],
+      citationCount: 0,
+      latencyMs,
+      model: MODEL_FLASH,
+      promptTokens: response.usageMetadata?.promptTokenCount,
+      outputTokens: response.usageMetadata?.candidatesTokenCount,
+    });
+
     res.json({ reply });
   } catch (err: any) {
     console.error(JSON.stringify({ route: 'POST /api/instructor', error: err?.message || String(err) }));
-    res.status(500).json({ error: 'Instructor is currently unavailable' });
+    res.status(503).json({
+      error: 'ai_unavailable',
+      message: getFriendlyErrorMessage(language),
+    });
   }
 });
 
@@ -133,7 +185,7 @@ academyRouter.post('/academy/complete', requireAuth, async (req: any, res) => {
     const parseResult = parseAndVerifyGCode(program);
     const hasCritical = parseResult.findings.some((f) => f.severity === 'CRITICAL');
 
-    // 2. Run collision crash engine across all segments
+    // 2. Run collision crash engine across all segments with 0.5mm sampling
     const lines = program.split('\n');
     let crashEvent = null;
 
@@ -161,7 +213,15 @@ academyRouter.post('/academy/complete', requireAuth, async (req: any, res) => {
         if (sMatch) rpm = parseFloat(sMatch[1]);
       }
 
-      const modalState = { spindleOn, toolLengthComp, tapMode, feed, rpm };
+      const modalState = {
+        spindleOn,
+        toolLengthComp,
+        tapMode,
+        feed,
+        rpm,
+        program,
+        pitch: mission.pitch,
+      };
       const col = checkCollision(segment, modalState);
       if (col) {
         crashEvent = col;
@@ -184,14 +244,12 @@ academyRouter.post('/academy/complete', requireAuth, async (req: any, res) => {
 
     const isFirstPass = !(currentData?.completedMissions || []).includes(missionId);
     const hints = typeof hintsUsed === 'number' ? Math.max(0, hintsUsed) : 0;
-    const computedXP = Math.max(0, Math.round(mission.targetXP * (1 - 0.2 * Math.min(hints, 3))));
+    const computedXP = calculateMissionXP(mission.targetXP, hints);
     const xpEarned = isFirstPass ? computedXP : 0;
     const newXP = (currentData?.xp || 0) + xpEarned;
 
     // Determine new level (Trainee 0-199, Operator 200-399, Setter 400+)
-    let level = 'Trainee';
-    if (newXP >= 400) level = 'Setter';
-    else if (newXP >= 200) level = 'Operator';
+    const level = calculateLevel(newXP);
 
     // Streak days (+1 when completing on a new calendar day in Asia/Kolkata)
     const kolkataToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());

@@ -113,9 +113,9 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
         if (sMatch) rpm = parseFloat(sMatch[1]);
       }
 
-      return { spindleOn, toolLengthComp, tapMode, feed, rpm };
+      return { spindleOn, toolLengthComp, tapMode, feed, rpm, program: code, pitch: mission?.pitch };
     };
-  }, [code]);
+  }, [code, mission]);
 
   // Simulation Loop
   useEffect(() => {
@@ -395,6 +395,8 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
             hintsRevealed={hintsRevealed}
             onRevealHint={() => setHintsRevealed(prev => Math.min(3, prev + 1))}
             xpPenalty={20}
+            program={code}
+            crashEvent={collision}
            />
         </div>
       </div>

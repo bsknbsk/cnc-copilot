@@ -3,6 +3,8 @@ import { GlassPanel } from '../ui/Layout.js';
 import { ButtonSecondary, IconButton } from '../ui/Button.js';
 import { Badge } from '../ui/Badge.js';
 import { apiFetch } from '../../lib/firebase.js';
+import { useAuth } from '../../context/AuthContext.js';
+import { CollisionEvent } from '../../engine/crash.js';
 
 interface Message {
   role: 'instructor' | 'user';
@@ -14,9 +16,12 @@ interface InstructorPanelProps {
   hintsRevealed: number;
   onRevealHint: () => void;
   xpPenalty: number;
+  program?: string;
+  crashEvent?: CollisionEvent | null;
 }
 
-export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPenalty }: InstructorPanelProps) {
+export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPenalty, program, crashEvent }: InstructorPanelProps) {
+  const { profile } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
     { role: 'instructor', text: "Welcome to the Crash Lab. I'm here to ensure you learn from failure. Analyze the program, identify the kinematic risk, and correct the G-code." }
   ]);
@@ -37,8 +42,11 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           missionId,
-          message: inputText,
-          context: { hintsRevealed }
+          program,
+          crashEvent,
+          hintLevel: Math.max(1, Math.min(3, hintsRevealed || 1)),
+          language: profile?.preferredLanguage || 'en',
+          question: inputText,
         })
       });
 
@@ -51,6 +59,35 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
     } catch (err) {
       console.warn('[Instructor] Chat error:', err);
       setMessages(prev => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleRevealHintClick = async () => {
+    const nextLevel = Math.min(3, hintsRevealed + 1);
+    onRevealHint();
+    setIsSending(true);
+
+    try {
+      const res = await apiFetch('/api/instructor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          missionId,
+          program,
+          crashEvent,
+          hintLevel: nextLevel,
+          language: profile?.preferredLanguage || 'en',
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(prev => [...prev, { role: 'instructor', text: data.reply }]);
+      }
+    } catch (err) {
+      console.warn('[Instructor] Hint fetch error:', err);
     } finally {
       setIsSending(false);
     }
@@ -120,7 +157,7 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
         <div className="space-y-2">
           {hintsRevealed < 3 && (
             <button 
-              onClick={onRevealHint}
+              onClick={handleRevealHintClick}
               className="w-full h-10 px-4 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-xs font-bold text-on-surface flex items-center justify-between transition-all group"
             >
               <div className="flex items-center gap-2">

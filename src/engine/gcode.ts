@@ -90,7 +90,7 @@ export function parseAndVerifyGCode(program: string, _controller: string = 'fanu
         else if (val >= 54 && val <= 59) { hasWcs = true; }
         else if (val === 43) { /* Handled with H */ }
         else if (val === 49) { activeH = null; }
-        else if (val === 84) { isTapCycle = true; }
+        else if (val === 84) { isTapCycle = true; activeMotion = 'G01'; lineHasMotion = true; }
       } else if (letter === 'M') {
         if (val === 3 || val === 4) spindleOn = true;
         else if (val === 5) spindleOn = false;
