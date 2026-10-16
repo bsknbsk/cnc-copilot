@@ -14,7 +14,8 @@ userRouter.get('/me', async (req, res) => {
       res.json({ ...req.user, ...userDoc.data() });
       return;
     }
-  } catch {
+  } catch (err: any) {
+    console.warn(JSON.stringify({ level: 'warn', route: 'GET /api/user/me', error: err?.message || String(err) }));
     // If adminDb cannot reach Firestore, fallback gracefully to token payload
   }
   res.json(req.user);
@@ -36,13 +37,15 @@ userRouter.patch('/preferences', async (req, res) => {
     if (Object.keys(updates).length > 0) {
       try {
         await adminDb.collection('users').doc(uid).set(updates, { merge: true });
-      } catch {
+      } catch (err: any) {
+        console.warn(JSON.stringify({ level: 'warn', route: 'PATCH /api/user/preferences:dbSet', error: err?.message || String(err) }));
         // Fallback: client SDK also updates users/{uid} directly
       }
     }
 
     res.json({ success: true, updates });
   } catch (err: any) {
+    console.error(JSON.stringify({ route: 'PATCH /api/user/preferences', error: err?.message || String(err) }));
     res.status(500).json({ error: 'failed_to_update_preferences', message: err.message });
   }
 });
@@ -60,7 +63,8 @@ userRouter.get('/activity', async (req, res) => {
 
     const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.json(items);
-  } catch {
+  } catch (err: any) {
+    console.warn(JSON.stringify({ level: 'warn', route: 'GET /api/user/activity', error: err?.message || String(err) }));
     res.json([]);
   }
 });

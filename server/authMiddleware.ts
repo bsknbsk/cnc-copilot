@@ -64,7 +64,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           await userRef.update({ role });
         }
       }
-    } catch {
+    } catch (err: any) {
+      console.warn(JSON.stringify({ level: 'warn', route: 'requireAuth:userSync', error: err?.message || String(err) }));
       // Graceful fallback: role is already securely enforced from ADMIN_EMAILS & verified ID token
     }
 

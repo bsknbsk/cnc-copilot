@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "start": "tsx server.ts",
+    "build": "vite build && node scripts/build-server.mjs",
+    "start": "NODE_ENV=production node dist-server/server.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "test": "tsc --noEmit",
     "guard:design": "node scripts/design-guard.mjs",
     "guard:design:write": "node scripts/design-guard.mjs --write"
   },

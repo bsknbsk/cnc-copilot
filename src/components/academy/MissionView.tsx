@@ -163,9 +163,9 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           missionId: mission.id,
-          xpEarned: Math.max(0, mission.targetXP - (hintsRevealed * (mission.targetXP * 0.2))),
-          badgeId: mission.badgeId
-        })
+          program: code,
+          hintsUsed: hintsRevealed,
+        }),
       });
       
       if (res.ok) {

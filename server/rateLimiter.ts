@@ -41,7 +41,8 @@ export async function rateLimitAI(req: Request, res: Response, next: NextFunctio
     }
 
     next();
-  } catch {
+  } catch (err: any) {
+    console.warn(JSON.stringify({ level: 'warn', route: 'rateLimitAI', error: err?.message || String(err) }));
     // In-memory fallback
     const current = inMemoryUsage.get(docId) || 0;
     if (current >= 100) {

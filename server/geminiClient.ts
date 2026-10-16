@@ -72,15 +72,3 @@ export async function executeWithRetry<T>(
     throw new Error(getFriendlyErrorMessage(language));
   }
 }
-
-export async function getGeminiResponse(prompt: string, language: string = 'en'): Promise<string> {
-  const ai = getGemini();
-
-  return executeWithRetry(async () => {
-    const result = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: prompt,
-    });
-    return result.text || '';
-  }, language);
-}

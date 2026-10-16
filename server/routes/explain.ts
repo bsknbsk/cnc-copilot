@@ -76,8 +76,8 @@ Computed Physics Output:
           link: 'calculator',
           createdAt: new Date().toISOString(),
         });
-    } catch (err) {
-      console.warn('[explainRouter] Activity write notice:', err);
+    } catch (err: any) {
+      console.warn(JSON.stringify({ level: 'warn', route: 'POST /api/explain:activity', error: err?.message || String(err) }));
     }
 
     res.json({
@@ -85,7 +85,7 @@ Computed Physics Output:
       latencyMs,
     });
   } catch (error: any) {
-    console.error('[explainRouter] Error generating explanation:', error?.message);
+    console.error(JSON.stringify({ route: 'POST /api/explain', error: error?.message || String(error) }));
     res.status(500).json({
       error: 'explanation_failed',
       message: error.message || 'Failed to explain parameters',

@@ -1,33 +1,18 @@
 import { Router, Request, Response } from 'express';
-import { adminAuth, adminDb } from '../firebase.js';
+import { adminDb } from '../firebase.js';
 import { MODEL_FLASH } from '../config.js';
 import { getGemini, executeWithRetry, getFriendlyErrorMessage } from '../geminiClient.js';
 import { logAIRequest } from '../logger.js';
+import { requireAuth } from '../authMiddleware.js';
+import { rateLimitAI } from '../rateLimiter.js';
 
 export const agentRouter = Router();
 
-// Helper to optionally resolve user from Bearer header
-async function resolveOptionalUser(req: Request) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-  const token = authHeader.split('Bearer ')[1]?.trim();
-  if (!token) return null;
-
-  try {
-    const decoded = await adminAuth.verifyIdToken(token);
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
 // 1. Diagnostic Chat endpoint
-agentRouter.post('/chat', async (req: Request, res: Response) => {
+agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Response) => {
   const startTime = Date.now();
   const { message, image, controller = 'Fanuc 0i-MF', language = 'en', chatId } = req.body;
-  const decodedUser = await resolveOptionalUser(req);
+  const user = req.user!;
 
   if (!message && !image) {
     res.status(400).json({ error: 'missing_input', message: 'Message or image snapshot is required' });
@@ -82,7 +67,7 @@ Instructions:
     // Log request
     logAIRequest({
       route: '/api/agent/chat',
-      uid: decodedUser?.uid || 'guest',
+      uid: user.uid,
       controller,
       language,
       toolNames: ['alarm_diagnostics', 'manual_search'],
@@ -93,23 +78,24 @@ Instructions:
       outputTokens: response.usageMetadata?.candidatesTokenCount,
     });
 
-    // If user is logged in and chatId provided, persist messages to Firestore
-    if (decodedUser?.uid && chatId) {
+    // If chatId provided, persist messages to Firestore
+    if (chatId) {
       try {
-        const userChatsRef = adminDb.collection('users').doc(decodedUser.uid).collection('chats').doc(chatId);
+        const userChatsRef = adminDb.collection('users').doc(user.uid).collection('chats').doc(chatId);
         
-        // 1. Add user message
+        // 1. Add user message (URLs only for imageUrl, max 500 chars, no base64)
+        const storedImageUrl = image && typeof image === 'string' && !image.startsWith('data:') && image.length <= 500 ? image : null;
         await userChatsRef.collection('messages').add({
           role: 'user',
-          text: message || 'Pendant Camera Screen Snapshot',
-          imageUrl: image ? String(image).slice(0, 100000) : null,
+          text: (message || 'Pendant Camera Screen Snapshot').slice(0, 20000),
+          imageUrl: storedImageUrl,
           createdAt: new Date(startTime).toISOString(),
         });
 
         // 2. Add assistant message
         await userChatsRef.collection('messages').add({
           role: 'model',
-          text: replyText,
+          text: replyText.slice(0, 20000),
           citations,
           createdAt: new Date().toISOString(),
         });
@@ -121,16 +107,16 @@ Instructions:
           updatedAt: new Date().toISOString(),
         }, { merge: true });
 
-        // 4. Log to user activity
-        await adminDb.collection('users').doc(decodedUser.uid).collection('activity').add({
+        // 4. Log to user activity (type in ['chat','calc','gcode','academy'], title <= 120, summary <= 300)
+        await adminDb.collection('users').doc(user.uid).collection('activity').add({
           type: 'chat',
-          title: `Alarm Diagnostic: ${(message || controller).slice(0, 40)}`,
-          summary: replyText.slice(0, 120),
+          title: `Alarm Diagnostic: ${(message || controller).slice(0, 40)}`.slice(0, 120),
+          summary: replyText.slice(0, 300),
           link: chatId,
           createdAt: new Date().toISOString(),
         });
-      } catch (dbErr) {
-        console.warn('[agentRouter] Firestore message persistence notice:', dbErr);
+      } catch (dbErr: any) {
+        console.warn(JSON.stringify({ level: 'warn', route: 'POST /api/agent/chat:db', error: dbErr?.message || String(dbErr) }));
       }
     }
 
@@ -140,7 +126,7 @@ Instructions:
       latencyMs,
     });
   } catch (error: any) {
-    console.error('[agentRouter] /api/agent/chat error:', error?.message || error);
+    console.error(JSON.stringify({ route: 'POST /api/agent/chat', error: error?.message || String(error) }));
     res.status(503).json({
       error: 'ai_unavailable',
       message: getFriendlyErrorMessage(language),
