@@ -1,0 +1,65 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // users/{uid} collection
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      // Client can update preferences, but never mutate the role field
+      allow update: if isOwner(uid) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+      // Client can create own document on first sign in (role defaults to user)
+      allow create: if isOwner(uid) && (!('role' in request.resource.data) || request.resource.data.role == 'user');
+      allow delete: if false;
+
+      // Subcollections of users/{uid}
+      match /chats/{chatId} {
+        allow read, write: if isOwner(uid);
+
+        match /messages/{msgId} {
+          allow read, write: if isOwner(uid);
+        }
+      }
+
+      match /activity/{activityId} {
+        allow read, create: if isOwner(uid);
+        allow update, delete: if false;
+      }
+
+      match /academy/{docId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // kb_docs: readable by any signed-in user, no client writes (server only)
+    match /kb_docs/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Server-only collections: usage, feedback, config
+    match /usage/{docId} {
+      allow read, write: if false;
+    }
+
+    match /feedback/{docId} {
+      allow read, write: if false;
+    }
+
+    match /config/{docId} {
+      allow read, write: if false;
+    }
+  }
+}

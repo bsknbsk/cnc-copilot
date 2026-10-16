@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+dist-server/
+coverage/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.pdf
+service-account*.json
+*-key.json

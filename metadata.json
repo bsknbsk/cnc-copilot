@@ -1,0 +1,1 @@
+{"name":"CNC Copilot","description":"AI explains. Physics decides. High-precision CNC shopfloor copilot with physics-based cutting calculations, G-code kinematic verification, crash simulation, and manual grounding.","requestFramePermissions":["camera","microphone"],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

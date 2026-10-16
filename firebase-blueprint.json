@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with preferences and assigned role",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "photoURL": { "type": "string" },
+        "preferredLanguage": { "type": "string", "enum": ["en", "hi", "ml", "ta"] },
+        "preferredController": { "type": "string", "enum": ["fanuc", "mitsubishi", "generic"] },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "preferredLanguage", "preferredController", "role"]
+    },
+    "Chat": {
+      "title": "Chat Session",
+      "description": "Diagnostic and troubleshooting conversation session",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 100 },
+        "controller": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "controller"]
+    },
+    "Message": {
+      "title": "Chat Message",
+      "description": "Message in a diagnostic chat",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "citations": { "type": "array" },
+        "toolCalls": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["role", "text"]
+    },
+    "Activity": {
+      "title": "Operator Activity",
+      "description": "Recent actions taken by the operator across tools",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["chat", "calc", "gcode", "academy"] },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "link": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "title", "link"]
+    },
+    "AcademyProgress": {
+      "title": "Academy Progress",
+      "description": "Operator gamified training metrics and badges",
+      "type": "object",
+      "properties": {
+        "xp": { "type": "number" },
+        "level": { "type": "string" },
+        "streakDays": { "type": "number" },
+        "lastActiveDate": { "type": "string" },
+        "badges": { "type": "array" },
+        "missions": { "type": "object" }
+      },
+      "required": ["xp", "level", "streakDays"]
+    },
+    "KnowledgeBaseDoc": {
+      "title": "Knowledge Base Document",
+      "description": "OEM manual or shop standard indexed in File Search",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "controller": { "type": "string" },
+        "docType": { "type": "string", "enum": ["Manual", "Shop Notes", "Parameter List"] },
+        "pages": { "type": "number" },
+        "status": { "type": "string", "enum": ["Indexing", "Ready", "Failed"] },
+        "fileSearchDocumentName": { "type": "string" },
+        "storagePath": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "controller", "docType", "status"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Operator profile records"
+    },
+    "/users/{uid}/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/Chat" },
+      "description": "Operator chats"
+    },
+    "/users/{uid}/chats/{chatId}/messages/{msgId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "Messages within an operator chat"
+    },
+    "/users/{uid}/activity/{id}": {
+      "schema": { "$ref": "#/entities/Activity" },
+      "description": "Operator activity history log"
+    },
+    "/users/{uid}/academy/progress": {
+      "schema": { "$ref": "#/entities/AcademyProgress" },
+      "description": "Operator Academy progress, missions, and XP"
+    },
+    "/kb_docs/{docId}": {
+      "schema": { "$ref": "#/entities/KnowledgeBaseDoc" },
+      "description": "Knowledge base indexed documents metadata"
+    }
+  }
+}
