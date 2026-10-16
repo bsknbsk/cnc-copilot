@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useAuth } from '../context/AuthContext.js';
 import { parseAndVerifyGCode, GCodeParseResult, GCodeFinding, GCodeSegment } from '../engine/gcode.js';
 import { collection, addDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase.js';
+import { db, apiFetch } from '../lib/firebase.js';
 import { 
   PageHeader, 
   SectionHeader, 
@@ -388,6 +388,17 @@ export function GCodeVerifier({ onNavigate }: GCodeVerifierProps) {
   const [viewPreset, setViewPreset] = useState<'iso' | 'top' | 'front'>('iso');
   const [justVerified, setJustVerified] = useState<boolean>(false);
 
+  // Gemini Pro AI G-Code Review Cache & State
+  const [reviewCache, setReviewCache] = useState<{
+    programText: string;
+    controller: string;
+    reviews: Array<{ line: number; code: string; explanation: string; fix: string }>;
+    additionalRisks: string[];
+  } | null>(null);
+  const [isLoadingReview, setIsLoadingReview] = useState<boolean>(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [expandedFindings, setExpandedFindings] = useState<Record<string, boolean>>({});
+
   // Code editor textarea ref
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -510,15 +521,78 @@ export function GCodeVerifier({ onNavigate }: GCodeVerifierProps) {
     reader.readAsText(file);
   };
 
+  const fetchGCodeReview = async (programToReview: string, controllerToUse: string) => {
+    if (reviewCache && reviewCache.programText === programToReview && reviewCache.controller === controllerToUse) {
+      return reviewCache;
+    }
+
+    setIsLoadingReview(true);
+    setReviewError(null);
+
+    try {
+      const res = await apiFetch('/api/gcode-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          program: programToReview,
+          controller: controllerToUse,
+          language: profile?.preferredLanguage || 'en',
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'AI review unavailable');
+      }
+
+      const data = await res.json();
+      const newCache = {
+        programText: programToReview,
+        controller: controllerToUse,
+        reviews: data.reviews || [],
+        additionalRisks: data.additionalRisks || [],
+      };
+      setReviewCache(newCache);
+      return newCache;
+    } catch (err: any) {
+      console.warn('[GCodeVerifier] Review error:', err);
+      setReviewError(err?.message || 'Failed to fetch AI review');
+      return null;
+    } finally {
+      setIsLoadingReview(false);
+    }
+  };
+
+  const handleToggleExplain = async (finding: GCodeFinding) => {
+    const key = `${finding.line}-${finding.code}`;
+    const willExpand = !expandedFindings[key];
+
+    setExpandedFindings(prev => ({
+      ...prev,
+      [key]: willExpand,
+    }));
+
+    if (willExpand) {
+      if (!reviewCache || reviewCache.programText !== gcodeText || reviewCache.controller !== controller) {
+        await fetchGCodeReview(gcodeText, controller);
+      }
+    }
+  };
+
   // Log verification to user's activity log in Firestore
   const handleVerifyProgram = async () => {
     setJustVerified(true);
     setTimeout(() => setJustVerified(false), 2400);
 
+    // Call review once per verify if there are findings
+    if (parseResult.findings.length > 0) {
+      fetchGCodeReview(gcodeText, controller);
+    }
+
     if (!user) return;
     try {
       await addDoc(collection(db, 'users', user.uid, 'activity'), {
-        type: 'simulation',
+        type: 'gcode',
         title: `Verified ${programName}`,
         summary: `${parseResult.criticalCount === 0 ? 'Passed syntax & kinematic audit (0 collisions)' : `${parseResult.criticalCount} collision risk(s) flagged`} • ${parseResult.blockCount} blocks`,
         link: 'gcode',
@@ -964,6 +1038,14 @@ export function GCodeVerifier({ onNavigate }: GCodeVerifierProps) {
                 ) : (
                   filteredFindings.map((finding, idx) => {
                     const isSelected = selectedFindingLine === finding.line;
+                    const findingKey = `${finding.line}-${finding.code}`;
+                    const isExpanded = !!expandedFindings[findingKey];
+                    const matchingReview = reviewCache?.reviews?.find(
+                      r => (r.code === finding.code && r.line === finding.line) ||
+                           (r.code === finding.code) ||
+                           (r.line === finding.line)
+                    );
+
                     return (
                       <div
                         key={`finding-${idx}`}
@@ -997,21 +1079,60 @@ export function GCodeVerifier({ onNavigate }: GCodeVerifierProps) {
                             </span>
                           </div>
 
-                          <button
-                            onClick={e => {
-                              e.stopPropagation();
-                              jumpToLine(finding.line);
-                            }}
-                            className="text-[10px] font-mono text-secondary hover:underline flex items-center gap-1 cursor-pointer"
-                          >
-                            <span>Jump to Line</span>
-                            <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                jumpToLine(finding.line);
+                              }}
+                              className="text-[10px] font-mono text-secondary hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>Jump to Line</span>
+                              <span className="material-symbols-outlined text-[12px]">arrow_forward</span>
+                            </button>
+                            <ButtonSecondary
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleToggleExplain(finding);
+                              }}
+                              className="h-8 px-3 text-xs"
+                              loading={isLoadingReview && isExpanded && !matchingReview}
+                            >
+                              {isExpanded ? 'Hide' : 'Explain'}
+                            </ButtonSecondary>
+                          </div>
                         </div>
 
                         <p className="font-body-sm text-xs text-on-surface leading-relaxed">
                           {finding.message}
                         </p>
+
+                        {isExpanded && (
+                          <div className="mt-space-xs p-space-sm rounded bg-surface-container flex flex-col gap-1.5 text-secondary font-mono font-code-sm text-code-sm border border-outline-variant/30">
+                            {isLoadingReview && !matchingReview ? (
+                              <span className="text-tertiary">Analyzing with Gemini Pro...</span>
+                            ) : matchingReview ? (
+                              <>
+                                <div className="text-on-surface leading-relaxed">
+                                  <span className="font-bold text-secondary">Explanation: </span>
+                                  {matchingReview.explanation}
+                                </div>
+                                {matchingReview.fix && (
+                                  <div className="pt-1.5 border-t border-outline-variant/20 flex flex-col gap-1">
+                                    <span className="text-primary font-bold text-[11px] uppercase tracking-wider">Corrected Code:</span>
+                                    <pre className="p-2 rounded bg-surface-container-lowest text-emerald-400 overflow-x-auto whitespace-pre-wrap font-mono">
+                                      {matchingReview.fix}
+                                    </pre>
+                                  </div>
+                                )}
+                              </>
+                            ) : reviewError ? (
+                              <span className="text-error">{reviewError}</span>
+                            ) : (
+                              <span className="text-tertiary">No additional explanation provided for this finding.</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })

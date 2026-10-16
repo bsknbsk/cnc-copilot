@@ -1,10 +1,12 @@
 import { Router } from 'express';
+import { Type } from '@google/genai';
 import { requireAuth } from '../authMiddleware.js';
 import { rateLimitAI } from '../rateLimiter.js';
-import { MODEL_FLASH } from '../config.js';
-import { getGemini, executeWithRetry } from '../geminiClient.js';
+import { MODEL_FLASH, MODEL_PRO } from '../config.js';
+import { getGemini, executeWithRetry, getFriendlyErrorMessage } from '../geminiClient.js';
 import { logAIRequest } from '../logger.js';
 import { adminDb } from '../firebase.js';
+import { parseAndVerifyGCode } from '../../src/engine/gcode.js';
 
 export const explainRouter = Router();
 
@@ -92,3 +94,112 @@ Computed Physics Output:
     });
   }
 });
+
+explainRouter.post('/gcode-review', requireAuth, rateLimitAI, async (req, res) => {
+  const startTime = Date.now();
+  const { program, controller = 'fanuc', language = 'en' } = req.body;
+  const user = req.user!;
+
+  if (!program || typeof program !== 'string') {
+    res.status(400).json({ error: 'missing_program', message: 'program is required and must be a string' });
+    return;
+  }
+
+  // Re-run parseAndVerifyGCode on the server (do not trust client findings)
+  const parseResult = parseAndVerifyGCode(program, controller);
+  const findings = parseResult.findings;
+
+  if (findings.length === 0) {
+    res.json({
+      reviews: [],
+      additionalRisks: [],
+      latencyMs: Date.now() - startTime,
+    });
+    return;
+  }
+
+  const prompt = `You are a senior CNC programmer for ${controller}. The deterministic checker found: ${JSON.stringify(findings)}. Explain each issue plainly for an operator, give the corrected code lines, and list any additional risks. Do not contradict the checker; you may add issues. Reply in ${language}.`;
+
+  try {
+    const ai = getGemini();
+
+    const response = await executeWithRetry(async () => {
+      return await ai.models.generateContent({
+        model: MODEL_PRO,
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reviews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    line: { type: Type.INTEGER },
+                    code: { type: Type.STRING },
+                    explanation: { type: Type.STRING },
+                    fix: { type: Type.STRING },
+                  },
+                  required: ['line', 'code', 'explanation', 'fix'],
+                },
+              },
+              additionalRisks: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: ['reviews', 'additionalRisks'],
+          },
+        },
+      });
+    }, language);
+
+    const latencyMs = Date.now() - startTime;
+
+    // Structured JSON Logging (no user message text logged)
+    logAIRequest({
+      route: '/api/gcode-review',
+      uid: user.uid,
+      controller: controller || user.preferredController || 'generic',
+      language,
+      toolNames: ['gcode_verifier'],
+      citationCount: 0,
+      latencyMs,
+      model: MODEL_PRO,
+      promptTokens: response.usageMetadata?.promptTokenCount,
+      outputTokens: response.usageMetadata?.candidatesTokenCount,
+    });
+
+    let reviews: Array<{ line: number; code: string; explanation: string; fix: string }> = [];
+    let additionalRisks: string[] = [];
+
+    try {
+      if (response.text) {
+        const raw = JSON.parse(response.text);
+        if (Array.isArray(raw)) {
+          reviews = raw;
+        } else if (raw && typeof raw === 'object') {
+          reviews = Array.isArray(raw.reviews) ? raw.reviews : [];
+          additionalRisks = Array.isArray(raw.additionalRisks) ? raw.additionalRisks : [];
+        }
+      }
+    } catch (parseErr: any) {
+      console.warn(JSON.stringify({ level: 'warn', route: 'POST /api/gcode-review:parse', error: parseErr?.message || String(parseErr) }));
+    }
+
+    res.json({
+      reviews,
+      additionalRisks,
+      latencyMs,
+    });
+  } catch (error: any) {
+    console.error(JSON.stringify({ route: 'POST /api/gcode-review', error: error?.message || String(error) }));
+    res.status(503).json({
+      error: 'ai_unavailable',
+      message: getFriendlyErrorMessage(language),
+    });
+  }
+});
+
