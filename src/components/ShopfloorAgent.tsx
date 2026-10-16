@@ -43,6 +43,8 @@ export interface ChatMessage {
   reasoning?: string | null; // For Diagnostic Reasoning Chain
   confidence?: number | null; // For Confidence Metric
   faultType?: string | null; // For Fault Type label
+  isError?: boolean;
+  failedQuery?: string;
 }
 
 interface ShopfloorAgentProps {
@@ -80,7 +82,7 @@ export function ShopfloorAgent({
     profile?.preferredController === 'mitsubishi'
       ? 'Mitsubishi M80'
       : profile?.preferredController === 'generic'
-      ? 'Haas NGC'
+      ? 'Generic ISO'
       : 'Fanuc 0i-MF'
   );
 
@@ -373,8 +375,8 @@ export function ShopfloorAgent({
           text: data.reply || 'Diagnostic complete.',
           citations: data.citations || null,
           createdAt: new Date().toISOString(),
-          confidence: data.confidence || 85.4,
-          faultType: data.faultType || 'Kinematic Impact',
+          confidence: data.confidence ?? null,
+          faultType: data.faultType ?? null,
           reasoning: data.reasoning || null,
         };
         setMessages((prev) => [...(Array.isArray(prev) ? prev : []), assistantMsg]);
@@ -384,10 +386,12 @@ export function ShopfloorAgent({
       const fallbackMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'model',
-        text: `### ⚠️ Diagnostic Interlock Warning\n\n${err?.message || 'Unable to connect to diagnostic server.'}\n\nPlease check that your CNC machine E-Stop is released and network link is stable, then retry.`,
+        text: err?.message || 'CNC Copilot is temporarily experiencing high load. Please retry in a moment.',
         createdAt: new Date().toISOString(),
-        confidence: 0,
-        faultType: 'Connection Error',
+        confidence: null,
+        faultType: 'AI Unavailable',
+        isError: true,
+        failedQuery: queryText,
       };
       setMessages((prev) => [...(Array.isArray(prev) ? prev : []), fallbackMsg]);
     } finally {
@@ -500,10 +504,10 @@ export function ShopfloorAgent({
               <div className="grid grid-cols-3 gap-1.5">
                 {[
                   { id: 'fanuc', label: 'Fanuc', sub: '0i-MF' },
-                  { id: 'haas', label: 'Haas', sub: 'NGC' },
-                  { id: 'mitsu', label: 'Mitsu', sub: 'M80' }
+                  { id: 'mitsubishi', label: 'Mitsubishi', sub: 'M80' },
+                  { id: 'generic', label: 'Generic', sub: 'ISO' }
                 ].map(ctrl => {
-                  const isSelected = activeController.toLowerCase().includes(ctrl.id);
+                  const isSelected = activeController.toLowerCase().includes(ctrl.id) || (ctrl.id === 'mitsubishi' && activeController.toLowerCase().includes('mitsu'));
                   return (
                     <button 
                       key={ctrl.id}
@@ -641,25 +645,33 @@ export function ShopfloorAgent({
                           <div className="flex items-start gap-3">
                             <span className="material-symbols-outlined text-primary text-[28px] mt-0.5">error_outline</span>
                             <div>
-                              <h4 className="font-headline-sm text-headline-sm text-on-surface font-semibold">Diagnostic Resolution</h4>
+                              <h4 className="font-headline-sm text-headline-sm text-on-surface font-semibold">{msg.isError ? 'Diagnostic Interlock' : 'Diagnostic Resolution'}</h4>
                               <div className="font-body-sm text-body-sm text-tertiary mt-0.5 max-w-lg prose prose-invert prose-xs">
                                 <Markdown>{msg.text.split('### 1.')[0] || msg.text}</Markdown>
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 bg-surface-container-lowest px-4 py-2 rounded self-start md:self-auto flex-shrink-0">
-                            <div className="flex flex-col">
-                              <span className="font-label-sm text-label-sm text-tertiary-container font-mono uppercase">Fault Confidence</span>
-                              <span className="font-headline-lg text-headline-lg text-secondary font-bold font-mono">{msg.confidence || 85.4}%</span>
+                          {msg.isError ? (
+                            <div className="flex items-center gap-3 self-start md:self-auto flex-shrink-0">
+                              <ButtonSecondary onClick={() => handleSendMessage(msg.failedQuery)} icon="refresh" className="h-9 px-3">
+                                Retry
+                              </ButtonSecondary>
                             </div>
-                            <span className="font-label-sm text-label-sm text-tertiary font-mono border-l border-surface-container-high pl-3 leading-tight">
-                              {msg.faultType?.split(' ').map((word, i) => <React.Fragment key={i}>{word}<br/></React.Fragment>) || <>Kinematic<br/>Observation</>}
-                            </span>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-3 bg-surface-container-lowest px-4 py-2 rounded self-start md:self-auto flex-shrink-0">
+                              <div className="flex flex-col">
+                                <span className="font-label-sm text-label-sm text-tertiary-container font-mono uppercase">Fault Confidence</span>
+                                <span className="font-headline-lg text-headline-lg text-secondary font-bold font-mono">{msg.confidence != null ? `${msg.confidence}%` : 'N/A'}</span>
+                              </div>
+                              <span className="font-label-sm text-label-sm text-tertiary font-mono border-l border-surface-container-high pl-3 leading-tight">
+                                {msg.faultType?.split(' ').map((word, i) => <React.Fragment key={i}>{word}<br/></React.Fragment>) || <>Kinematic<br/>Observation</>}
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Remainder of markdown if any */}
-                        {msg.text.includes('### 1.') && (
+                        {!msg.isError && msg.text.includes('### 1.') && (
                           <div className="space-y-4 font-body-sm text-body-sm text-tertiary leading-relaxed prose prose-invert prose-sm max-w-none">
                             <Markdown>{'### 1.' + msg.text.split('### 1.')[1].split('Verified Citations:')[0]}</Markdown>
                           </div>

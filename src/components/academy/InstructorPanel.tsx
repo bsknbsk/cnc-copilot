@@ -45,9 +45,12 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
       if (res.ok) {
         const data = await res.json();
         setMessages(prev => [...prev, { role: 'instructor', text: data.reply }]);
+      } else {
+        setMessages(prev => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
       }
     } catch (err) {
       console.warn('[Instructor] Chat error:', err);
+      setMessages(prev => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
     } finally {
       setIsSending(false);
     }

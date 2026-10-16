@@ -383,7 +383,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 Diagnose Alarm
               </h2>
               <p className="font-body-sm text-body-sm text-tertiary mt-1">
-                Capture terminal photo or paste Fanuc/Haas alarm code for instant physics verification.
+                Capture terminal photo or paste Fanuc/Mitsubishi alarm code for instant physics verification.
               </p>
             </div>
           </Card>

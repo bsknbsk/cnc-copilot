@@ -20,7 +20,7 @@ interface AcademyStats {
   learners: number;
   completions: number;
   avgCrashes: number;
-  mostCommonCrash: string;
+  mostCommonCrash: string | null;
 }
 
 export function MissionMap({ onNavigate }: { onNavigate: (tab: string, state?: any) => void }) {
@@ -133,11 +133,11 @@ export function MissionMap({ onNavigate }: { onNavigate: (tab: string, state?: a
           </Card>
           <Card className="p-space-md">
             <SectionHeader title="Avg Crashes/Pass" icon="warning" className="border-0 mb-1" />
-            <div className="text-headline-lg font-bold text-primary-container">{stats.avgCrashes.toFixed(1)}</div>
+            <div className="text-headline-lg font-bold text-primary-container">{(stats.avgCrashes ?? 0).toFixed(1)}</div>
           </Card>
           <Card className="p-space-md">
             <SectionHeader title="Common Crash" icon="error" className="border-0 mb-1" />
-            <div className="text-body-md font-bold text-error truncate">{stats.mostCommonCrash}</div>
+            <div className="text-body-md font-bold text-error truncate">{stats.mostCommonCrash || 'None'}</div>
           </Card>
         </div>
       )}

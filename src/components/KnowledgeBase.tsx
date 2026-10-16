@@ -38,134 +38,13 @@ export interface KBDocument {
   isPinned?: boolean;
 }
 
-// Initial verified standard reference documents (seeded if collection is brand new)
-const INITIAL_VERIFIED_DOCS: KBDocument[] = [
-  {
-    id: 'fanuc-0i-mf-manual',
-    name: 'Fanuc Series 0i-MODEL F Plus Operators Manual',
-    controller: 'Fanuc 0i-MF',
-    docType: 'OEM Manual',
-    refCode: 'B-64694EN/01 • Macro Variable §12',
-    pages: 412,
-    status: 'Ready',
-    dateAdded: 'Oct 12, 2026',
-    vectorCount: 24720,
-    chunks: [
-      {
-        id: 'chk-fn-1',
-        section: 'Page 184, §4.3.2 (Servo Amp Unit)',
-        page: 184,
-        matchScore: 98,
-        tokens: 64,
-        snippet: '“SV0401 (V) OVER CURRENT: Current flowing into the servo motor coil exceeded rated threshold limit during rapid acceleration. Check power transistor module MCCB and connector JV1B.”',
-      },
-      {
-        id: 'chk-fn-2',
-        section: 'Page 92, §2.1.8 (Spindle Sync)',
-        page: 92,
-        matchScore: 84,
-        tokens: 58,
-        snippet: '“Parameter 3708 bit 0 set to 1 enables rigid tapping cycle spindle encoder synchronization. Spindle override fixed at 100% during feed motion.”',
-      },
-      {
-        id: 'chk-fn-3',
-        section: 'Page 310, §8.4 (Macro Variables)',
-        page: 310,
-        matchScore: 76,
-        tokens: 49,
-        snippet: '“#100-#199: Non-volatile system common variables retained across power cycle. #5001-#5005: Read current tool position coordinate vector in active WCS.”',
-      },
-    ],
-  },
-  {
-    id: 'haas-ngc-service-manual',
-    name: 'Haas VF Series Service & Maintenance Manual',
-    controller: 'Haas NGC',
-    docType: 'Service Manual',
-    refCode: '96-0284 Rev B • NGC Bus Regeneration',
-    pages: 286,
-    status: 'Ready',
-    dateAdded: 'Oct 10, 2026',
-    vectorCount: 18400,
-    chunks: [
-      {
-        id: 'chk-haas-1',
-        section: 'Page 72, Chapter 5 (Vector Drive)',
-        page: 72,
-        matchScore: 89,
-        tokens: 48,
-        snippet: '“Alarm 102 / SV0401 occurs when high inertia causes DC bus voltage regeneration spike before dynamic braking resistor engages.”',
-      },
-      {
-        id: 'chk-haas-2',
-        section: 'Page 145, Chapter 8 (ATC Carousel)',
-        page: 145,
-        matchScore: 71,
-        tokens: 52,
-        snippet: '“Parameter 209 pocket offset alignment calibration procedure. Verify pocket 1 mechanical dog switches before initiating M06 tool change arm swing.”',
-      },
-    ],
-  },
-  {
-    id: 'shop-sop-titanium',
-    name: 'Shop SOP: High-Speed Machining Titanium Ti-6Al-4V',
-    controller: 'Universal',
-    docType: 'Shop Standard',
-    refCode: 'SOP-ENG-088 • Approved By QA Lead',
-    pages: 18,
-    status: 'Ready',
-    dateAdded: 'Oct 08, 2026',
-    vectorCount: 1150,
-    chunks: [
-      {
-        id: 'chk-sop-1',
-        section: 'Page 3, Step 4.2 (Thermal & Power)',
-        page: 3,
-        matchScore: 74,
-        tokens: 52,
-        snippet: '“Inspect fan exhaust filters on CNC cabinet prior to heavy roughing cycles. Stalled fans trigger SV0401 due to overheat in the IPM power pack.”',
-      },
-      {
-        id: 'chk-sop-2',
-        section: 'Page 7, Step 6.1 (Coolant & Radial Engagement)',
-        page: 7,
-        matchScore: 82,
-        tokens: 61,
-        snippet: '“Maintain high-pressure through-spindle coolant (minimum 70 bar / 1000 psi) at tool tip. Radial chip thinning: do not exceed ae/D 0.08 to prevent thermal work hardening.”',
-      },
-    ],
-  },
-  {
-    id: 'seco-tools-catalog',
-    name: 'Seco Tools 2026 Solid End Mills Milling Feed Catalog',
-    controller: 'Tooling Spec',
-    docType: 'Catalog',
-    refCode: 'CAT-SECO-M26 • Table Vectorization',
-    pages: 520,
-    status: 'Indexing',
-    progress: 82,
-    dateAdded: 'Today 09:14',
-    vectorCount: 31200,
-    chunks: [
-      {
-        id: 'chk-seco-1',
-        section: 'Page 44, Table 3.4 (Side Milling Titanium)',
-        page: 44,
-        matchScore: 68,
-        tokens: 45,
-        snippet: '“JHP951 4-Flute End Mill: Vc = 45-65 m/min for ISO S. Recommended chip load fz = 0.04-0.08 mm/tooth with TiAlN coated solid carbide.”',
-      },
-    ],
-  },
-];
-
 interface KnowledgeBaseProps {
   onNavigate?: (tab: string, state?: any) => void;
 }
 
 export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const { user, isAdmin } = useAuth();
-  const [documents, setDocuments] = useState<KBDocument[]>(INITIAL_VERIFIED_DOCS);
+  const [documents, setDocuments] = useState<KBDocument[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [controllerFilter, setControllerFilter] = useState('all');
   const [docTypeFilter, setDocTypeFilter] = useState('all');
@@ -175,9 +54,9 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const itemsPerPage = 4;
 
   // Simulator state
-  const [simQuery, setSimQuery] = useState('What does Fanuc Alarm SV0401 mean and what is the relay code?');
+  const [simQuery, setSimQuery] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
-  const [simLatency, setSimLatency] = useState('14.8');
+  const [simLatency, setSimLatency] = useState('0');
   const [activeChunks, setActiveChunks] = useState<ChunkItem[]>([]);
 
   // Modals & inspect
@@ -185,7 +64,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadState, setUploadState] = useState({
     name: '',
-    controller: 'Fanuc 0i-MF',
+    controller: 'Fanuc',
     docType: 'OEM Manual' as KBDocument['docType'],
     refCode: '',
     pages: 50,
@@ -194,7 +73,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
 
   // Subscribe to real Firestore `kb_docs` collection if accessible
   useEffect(() => {
-    if (!user) return;
     try {
       const q = query(collection(db, 'kb_docs'));
       const unsub = onSnapshot(
@@ -207,20 +85,19 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
             }));
             setDocuments(docs);
           } else {
-            // Keep verified reference corpus if collection is currently unpopulated
-            setDocuments(INITIAL_VERIFIED_DOCS);
+            setDocuments([]);
           }
         },
         (err) => {
           console.warn('[KnowledgeBase] Firestore kb_docs stream notice:', err);
-          setDocuments(INITIAL_VERIFIED_DOCS);
+          setDocuments([]);
         }
       );
       return () => unsub();
     } catch {
-      setDocuments(INITIAL_VERIFIED_DOCS);
+      setDocuments([]);
     }
-  }, [user]);
+  }, []);
 
   // Aggregate stats
   const totalDocs = documents.length;
@@ -229,9 +106,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const totalEmbeddings = useMemo(() => {
     return documents.reduce((sum, d) => sum + (d.vectorCount || d.pages * 60), 0);
   }, [documents]);
-
-  const targetDocs = 42;
-  const docCompletionPercent = Math.min(100, Math.round((readyDocs / targetDocs) * 100));
 
   // Filter & sort documents
   const filteredDocs = useMemo(() => {
@@ -246,11 +120,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
         const matchesController =
           controllerFilter === 'all' ||
           (controllerFilter === 'fanuc' && docItem.controller.toLowerCase().includes('fanuc')) ||
-          (controllerFilter === 'haas' && docItem.controller.toLowerCase().includes('haas')) ||
-          (controllerFilter === 'heidenhain' && docItem.controller.toLowerCase().includes('heidenhain')) ||
-          (controllerFilter === 'mazak' && docItem.controller.toLowerCase().includes('mazak')) ||
-          (controllerFilter === 'siemens' && docItem.controller.toLowerCase().includes('siemens')) ||
-          (controllerFilter === 'universal' && docItem.controller.toLowerCase().includes('universal'));
+          (controllerFilter === 'mitsubishi' && docItem.controller.toLowerCase().includes('mitsubishi')) ||
+          (controllerFilter === 'generic' && docItem.controller.toLowerCase().includes('generic'));
 
         const matchesType =
           docTypeFilter === 'all' ||
@@ -282,96 +153,15 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
 
   // Initial simulation chunks
   useEffect(() => {
-    const allChunks: ChunkItem[] = [];
-    documents.forEach((d) => {
-      if (d.chunks) {
-        allChunks.push(...d.chunks);
-      }
-    });
-    setActiveChunks(allChunks.slice(0, 3));
+    setActiveChunks([]);
   }, [documents]);
 
-  // Execute RAG simulator search
-  const handleRunSimulation = () => {
-    setIsSimulating(true);
-    const start = performance.now();
+  // Execute RAG simulator search (disabled until Task 3)
+  const handleRunSimulation = () => {};
 
-    setTimeout(() => {
-      const elapsed = (performance.now() - start + Math.random() * 8 + 10).toFixed(1);
-      setSimLatency(elapsed);
-
-      // Score chunks against query keywords
-      const terms = simQuery.toLowerCase().split(/\s+/).filter(Boolean);
-      const scored: { chunk: ChunkItem; docName: string }[] = [];
-
-      documents.forEach((d) => {
-        (d.chunks || []).forEach((c) => {
-          let score = 50;
-          terms.forEach((t) => {
-            if (c.snippet.toLowerCase().includes(t)) score += 18;
-            if (c.section.toLowerCase().includes(t)) score += 12;
-            if (d.name.toLowerCase().includes(t)) score += 8;
-          });
-          score = Math.min(99, Math.max(62, score));
-          scored.push({
-            chunk: { ...c, matchScore: score },
-            docName: d.name,
-          });
-        });
-      });
-
-      scored.sort((a, b) => b.chunk.matchScore - a.chunk.matchScore);
-      setActiveChunks(scored.slice(0, 3).map((s) => s.chunk));
-      setIsSimulating(false);
-    }, 450);
-  };
-
-  // Upload document handler
+  // Upload document handler (disabled until Task 3)
   const handleCreateDocument = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!uploadState.name.trim()) return;
-
-    setIsUploading(true);
-    const newDocId = `doc-${Date.now()}`;
-    const newDoc: KBDocument = {
-      id: newDocId,
-      name: uploadState.name.trim(),
-      controller: uploadState.controller,
-      docType: uploadState.docType,
-      refCode: uploadState.refCode.trim() || `REF-${Math.floor(Math.random() * 9000 + 1000)}`,
-      pages: uploadState.pages || 32,
-      status: 'Ready',
-      dateAdded: 'Today ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      vectorCount: (uploadState.pages || 32) * 60,
-      chunks: [
-        {
-          id: `chk-${Date.now()}-1`,
-          section: 'Section 1.1 • Overview & Operating Parameters',
-          page: 1,
-          matchScore: 92,
-          tokens: 54,
-          snippet: `“Verified operational specification for ${uploadState.name}. Safety limits and kinematic parameters configured for ${uploadState.controller}.”`,
-        },
-      ],
-    };
-
-    try {
-      // Try writing to Firestore if admin
-      await setDoc(doc(db, 'kb_docs', newDocId), newDoc);
-    } catch {
-      // Local state fallback
-      setDocuments((prev) => [newDoc, ...prev]);
-    }
-
-    setIsUploading(false);
-    setUploadModalOpen(false);
-    setUploadState({
-      name: '',
-      controller: 'Fanuc 0i-MF',
-      docType: 'OEM Manual',
-      refCode: '',
-      pages: 50,
-    });
   };
 
   // Delete document handler
@@ -411,9 +201,9 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               <SectionHeader title="Indexed Documents" icon="library_books" className="border-b-0 mb-0 pb-0" />
               <div className="flex items-baseline gap-space-xs mt-2">
                 <span className="font-code-lg text-headline-xl font-bold text-on-surface">{readyDocs}</span>
-                <span className="font-label-sm text-label-sm text-secondary font-mono">/ {targetDocs} Target</span>
+                <span className="font-label-sm text-label-sm text-secondary font-mono">/ {totalDocs} Total</span>
               </div>
-              <ProgressBar progress={docCompletionPercent} variant="secondary" />
+              <ProgressBar progress={totalDocs > 0 ? Math.min(100, Math.round((readyDocs / totalDocs) * 100)) : 0} variant="secondary" />
             </Card>
 
             <Card className="p-space-md flex flex-col justify-between">
@@ -422,27 +212,27 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                 <span className="font-code-lg text-headline-xl font-bold text-on-surface">
                   {totalEmbeddings.toLocaleString()}
                 </span>
-                <span className="font-label-sm text-label-sm text-primary font-mono">+12.4k today</span>
+                <span className="font-label-sm text-label-sm text-primary font-mono">Total</span>
               </div>
-              <ProgressBar progress={84} variant="primary" />
+              <ProgressBar progress={totalDocs > 0 ? 100 : 0} variant="primary" />
             </Card>
 
             <Card className="p-space-md flex flex-col justify-between">
               <SectionHeader title="Avg Retrieval" icon="bolt" className="border-b-0 mb-0 pb-0" />
               <div className="flex items-baseline gap-space-xs mt-2">
-                <span className="font-code-lg text-headline-xl font-bold text-on-surface">{simLatency}</span>
-                <span className="font-label-sm text-label-sm text-tertiary font-mono">ms (HNSW)</span>
+                <span className="font-code-lg text-headline-xl font-bold text-on-surface">--</span>
+                <span className="font-label-sm text-label-sm text-tertiary font-mono">ms</span>
               </div>
-              <ProgressBar progress={95} variant="tertiary" />
+              <ProgressBar progress={0} variant="tertiary" />
             </Card>
 
             <Card className="p-space-md flex flex-col justify-between">
               <SectionHeader title="OCR Accuracy" icon="verified" className="border-b-0 mb-0 pb-0" />
               <div className="flex items-baseline gap-space-xs mt-2">
-                <span className="font-code-lg text-headline-xl font-bold text-on-surface">99.1%</span>
+                <span className="font-code-lg text-headline-xl font-bold text-on-surface">--</span>
                 <span className="font-label-sm text-label-sm text-secondary font-mono">Precision</span>
               </div>
-              <ProgressBar progress={99.1} variant="secondary" />
+              <ProgressBar progress={0} variant="secondary" />
             </Card>
           </div>
 
@@ -453,8 +243,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               title="Knowledge Base & Shopfloor Memory"
               caption="Controller manuals, tooling catalog cut-sheets, and verified shop machining standards indexed for real-time retrieval."
               actions={
-                <ButtonPrimary onClick={() => setUploadModalOpen(true)} icon="upload_file">
-                  Upload Manual
+                <ButtonPrimary disabled icon="upload_file">
+                  Upload available after setup
                 </ButtonPrimary>
               }
             />
@@ -490,8 +280,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   >
                     <option value="all">All Controllers</option>
                     <option value="fanuc">Fanuc</option>
-                    <option value="haas">Haas</option>
-                    <option value="universal">Universal</option>
+                    <option value="mitsubishi">Mitsubishi</option>
+                    <option value="generic">Generic</option>
                   </select>
 
                   <select
@@ -509,14 +299,13 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   </select>
                 </div>
 
-                <ButtonPrimary onClick={() => setUploadModalOpen(true)} icon="upload_file" className="min-w-[180px]">
-                  Upload Manual
+                <ButtonPrimary disabled icon="upload_file" className="min-w-[180px]">
+                  Upload available after setup
                 </ButtonPrimary>
               </Card>
 
               {/* Upload Drop Zone Area */}
               <div
-                onClick={() => setUploadModalOpen(true)}
                 className="bg-surface-container-low hover:bg-surface-container rounded-xl p-space-xl text-center transition-all cursor-pointer shadow-sm relative group border border-outline-variant/30 hover:border-primary-container/40"
                 id="dropzone"
               >
@@ -752,7 +541,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   </div>
                   <div className="flex items-center gap-1.5 text-tertiary-container font-label-sm text-label-sm font-mono">
                     <span className="w-1.5 h-1.5 rounded-full bg-secondary" />
-                    <span>Vector DB: Milvus 2.4 + Titan Embedding (v2)</span>
+                    <span>Vector DB: Gemini File Search</span>
                   </div>
                 </div>
 
@@ -776,21 +565,12 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                       </span>
                       <button
                         onClick={handleRunSimulation}
-                        disabled={isSimulating}
+                        disabled={true}
                         className="px-space-sm py-1 bg-secondary text-surface-container-lowest font-label-sm text-label-sm font-bold font-mono rounded flex items-center gap-1 hover:bg-secondary-fixed transition-colors cursor-pointer disabled:opacity-75"
                         id="rag-run-btn"
                       >
-                        {isSimulating ? (
-                          <>
-                            <span className="material-symbols-outlined text-[14px] animate-spin">refresh</span>
-                            <span>INDEXING</span>
-                          </>
-                        ) : (
-                          <>
-                            <span>SIMULATE</span>
-                            <span className="material-symbols-outlined text-[14px]">send</span>
-                          </>
-                        )}
+                        <span>SIMULATE</span>
+                        <span className="material-symbols-outlined text-[14px]">send</span>
                       </button>
                     </div>
                   </div>
@@ -802,7 +582,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                     Retrieved Chunks (HNSW Ranked)
                   </span>
                   <span className="font-label-sm text-label-sm font-mono text-secondary">
-                    Latency: {simLatency}ms
+                    Latency: --
                   </span>
                 </div>
 
@@ -811,8 +591,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   {activeChunks.length === 0 ? (
                     <EmptyState 
                       icon="ads_click"
-                      title="No vector chunks matched"
-                      description="Click SIMULATE to run test retrieval from Milvus HNSW index."
+                      title="Upload a manual to test retrieval."
+                      description="Connect your technical documentation to test semantic search."
                     />
                   ) : (
                     activeChunks.map((chunk, idx) => (
@@ -861,8 +641,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
 
                 {/* Telemetry Summary Bar */}
                 <div className="p-space-sm rounded-lg bg-surface-container-lowest flex items-center justify-between font-mono font-label-sm text-label-sm text-tertiary">
-                  <span>Embedding Model: Titan-Embed-v2</span>
-                  <span className="text-secondary font-bold">Precision: 1024-dim</span>
+                  <span>Embedding Model: Gemini File Search</span>
+                  <span className="text-secondary font-bold">Grounding: Active</span>
                 </div>
               </div>
 
@@ -887,7 +667,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                       All Corpora Synchronized
                     </span>
                     <span className="font-body-sm text-body-sm text-tertiary">
-                      Milvus HNSW vector indexes up to date with active shop standards.
+                      Gemini File Search index up to date with active shop standards.
                     </span>
                   </div>
                 </div>
@@ -975,13 +755,9 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                 onChange={(e) => setUploadState({ ...uploadState, controller: e.target.value })}
                 className="px-3 py-2.5 rounded-xl bg-surface-container-low border border-outline-variant/30 text-on-surface font-body-sm text-sm focus:outline-none focus:border-primary-container"
               >
-                <option value="Fanuc 0i-MF">Fanuc 0i-MF</option>
-                <option value="Fanuc 31i-B">Fanuc 31i-B</option>
-                <option value="Haas NGC">Haas NGC</option>
-                <option value="Mitsubishi M80">Mitsubishi M80</option>
-                <option value="Siemens 840D">Siemens 840D</option>
-                <option value="Universal">Universal / SOP</option>
-                <option value="Tooling Spec">Tooling Spec</option>
+                <option value="Fanuc">Fanuc</option>
+                <option value="Mitsubishi">Mitsubishi</option>
+                <option value="Generic">Generic</option>
               </select>
             </div>
 

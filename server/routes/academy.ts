@@ -3,41 +3,84 @@ import { adminDb } from '../firebase.js';
 import { getGeminiResponse } from '../geminiClient.js';
 import { parseAndVerifyGCode } from '../../src/engine/gcode.js';
 import { checkCollision, ACADEMY_MISSIONS } from '../../src/engine/crash.js';
-import { requireAuth } from '../authMiddleware.js';
+import { requireAuth, requireAdmin } from '../authMiddleware.js';
 
 export const academyRouter = Router();
 
 // GET /api/academy/stats
-academyRouter.get('/academy/stats', requireAuth, async (req: any, res) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
+academyRouter.get('/academy/stats', requireAuth, requireAdmin, async (req: any, res) => {
   try {
-    // In a real app, these would be aggregations. 
-    // For now, let's return some realistic-looking mocked stats from Firestore if they exist, or defaults.
-    const statsDoc = await adminDb.collection('stats').doc('academy').get();
-    if (statsDoc.exists) {
-      return res.json(statsDoc.data());
+    const snapshot = await adminDb.collectionGroup('academy').get();
+    let learners = 0;
+    let completions = 0;
+    let totalCrashesBeforePass = 0;
+    let learnersWithCrashes = 0;
+    const crashTypeCounts: Record<string, number> = {};
+
+    snapshot.docs.forEach((doc) => {
+      if (doc.id !== 'progress') return;
+      learners++;
+      const data = doc.data();
+
+      // Completions: sum of completed missions
+      if (Array.isArray(data.completedMissions)) {
+        completions += data.completedMissions.length;
+      }
+
+      // Crashes before pass
+      if (typeof data.crashesBeforePass === 'number') {
+        totalCrashesBeforePass += data.crashesBeforePass;
+        learnersWithCrashes++;
+      } else if (typeof data.crashes === 'number') {
+        totalCrashesBeforePass += data.crashes;
+        learnersWithCrashes++;
+      }
+
+      // Most common crash type
+      if (Array.isArray(data.crashTypes)) {
+        data.crashTypes.forEach((type: string) => {
+          if (typeof type === 'string') {
+            crashTypeCounts[type] = (crashTypeCounts[type] || 0) + 1;
+          }
+        });
+      } else if (Array.isArray(data.crashHistory)) {
+        data.crashHistory.forEach((item: any) => {
+          const type = typeof item === 'string' ? item : item?.type;
+          if (type && typeof type === 'string') {
+            crashTypeCounts[type] = (crashTypeCounts[type] || 0) + 1;
+          }
+        });
+      }
+    });
+
+    let mostCommonCrash: string | null = null;
+    let maxCount = 0;
+    for (const [type, count] of Object.entries(crashTypeCounts)) {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonCrash = type;
+      }
     }
 
-    // Default stats
+    const avgCrashes = learnersWithCrashes > 0 ? Number((totalCrashesBeforePass / learnersWithCrashes).toFixed(1)) : 0;
+
     return res.json({
-      learners: 124,
-      completions: 482,
-      avgCrashes: 3.2,
-      mostCommonCrash: 'Rapid Into Stock'
+      learners,
+      completions,
+      avgCrashes,
+      mostCommonCrash,
     });
-  } catch (err) {
+  } catch (err: any) {
+    console.error(JSON.stringify({ route: 'GET /api/academy/stats', error: err?.message || String(err) }));
     res.status(500).json({ error: 'Failed to fetch academy stats' });
   }
 });
 
 // POST /api/instructor
-academyRouter.post('/instructor', async (req, res) => {
+academyRouter.post('/instructor', requireAuth, async (req: any, res) => {
   const { missionId, message, context } = req.body;
-  
-  const mission = ACADEMY_MISSIONS.find(m => m.id === missionId);
+
+  const mission = ACADEMY_MISSIONS.find((m) => m.id === missionId);
   if (!mission) {
     return res.status(404).json({ error: 'Mission not found' });
   }
@@ -48,7 +91,7 @@ academyRouter.post('/instructor', async (req, res) => {
     Scenario: ${mission.description}
     Fault: ${mission.faultDescription}
     Student Message: "${message}"
-    Hints revealed so far: ${context.hintsRevealed} of 3.
+    Hints revealed so far: ${context?.hintsRevealed || 0} of 3.
     
     Keep your response short, industrial, and helpful. 
     Don't give the answer directly, but guide them to look at the specific G-code block that causes the crash.
@@ -58,7 +101,8 @@ academyRouter.post('/instructor', async (req, res) => {
   try {
     const reply = await getGeminiResponse(prompt);
     res.json({ reply });
-  } catch (err) {
+  } catch (err: any) {
+    console.error(JSON.stringify({ route: 'POST /api/instructor', error: err?.message || String(err) }));
     res.status(500).json({ error: 'Instructor is currently unavailable' });
   }
 });
@@ -68,7 +112,7 @@ academyRouter.post('/academy/complete', requireAuth, async (req: any, res) => {
   const { missionId, xpEarned, badgeId } = req.body;
   const uid = req.user.uid;
 
-  const mission = ACADEMY_MISSIONS.find(m => m.id === missionId);
+  const mission = ACADEMY_MISSIONS.find((m) => m.id === missionId);
   if (!mission) return res.status(404).json({ error: 'Mission not found' });
 
   try {
@@ -85,28 +129,20 @@ academyRouter.post('/academy/complete', requireAuth, async (req: any, res) => {
     if (newXP >= 400) level = 'Setter';
     else if (newXP >= 200) level = 'Operator';
 
-    await userRef.set({
-      xp: newXP,
-      level,
-      completedMissions,
-      badges,
-      lastUpdated: new Date().toISOString()
-    }, { merge: true });
-
-    // Update global stats
-    const statsRef = adminDb.collection('stats').doc('academy');
-    await adminDb.runTransaction(async (t: any) => {
-      const sSnap = await t.get(statsRef);
-      const sData = sSnap.exists ? sSnap.data() : { learners: 0, completions: 0, avgCrashes: 3, mostCommonCrash: 'Rapid Into Stock' };
-      t.set(statsRef, {
-        ...sData,
-        completions: (sData?.completions || 0) + 1
-      }, { merge: true });
-    });
+    await userRef.set(
+      {
+        xp: newXP,
+        level,
+        completedMissions,
+        badges,
+        lastUpdated: new Date().toISOString(),
+      },
+      { merge: true }
+    );
 
     res.json({ success: true, newXP, level });
-  } catch (err) {
-    console.error('Failed to complete mission:', err);
+  } catch (err: any) {
+    console.error(JSON.stringify({ route: 'POST /api/academy/complete', error: err?.message || String(err) }));
     res.status(500).json({ error: 'Failed to record progress' });
   }
 });

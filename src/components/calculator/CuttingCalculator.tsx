@@ -686,7 +686,7 @@ export function CuttingCalculator() {
               <Card className="p-space-md flex flex-col justify-between">
                 <SectionHeader 
                   title={process === 'turning' || process === 'boring' ? 'Surface Finish (Ra)' : process === 'drilling' ? 'Drill Thrust (Ff)' : 'Spindle Torque'}
-                  actions={<Badge variant="tertiary">{process === 'turning' || process === 'boring' ? 'Nose r: 0.8mm' : 'Rated: 42 N·m'}</Badge>}
+                  actions={<Badge variant="tertiary">{process === 'turning' || process === 'boring' ? 'Nose r: 0.8mm' : `Rated: ${Math.round((machineMaxKw * 9550) / 3000)} N·m`}</Badge>}
                   className="border-b-0 mb-0 pb-0"
                 />
                 <div className="flex items-baseline gap-space-xs my-space-xs">
@@ -700,7 +700,7 @@ export function CuttingCalculator() {
                 <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
                   <span>{process === 'turning' || process === 'boring' ? `Cycle: ${results.cycleTimeMin} min` : 'Low Thermal Strain'}</span>
                   <span className="text-secondary font-semibold">
-                    {process === 'turning' || process === 'boring' ? 'Iso Finish N7' : '19.5% Curve'}
+                    {process === 'turning' || process === 'boring' ? 'Iso Finish N7' : 'Nominal'}
                   </span>
                 </div>
               </Card>
