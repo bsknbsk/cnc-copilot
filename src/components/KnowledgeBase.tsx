@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext.js';
 import { collection, onSnapshot, query, doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase.js';
+import { db, apiFetch } from '../lib/firebase.js';
 import { 
   PageHeader, 
   SectionHeader, 
@@ -29,7 +29,7 @@ export interface KBDocument {
   docType: 'OEM Manual' | 'Service Manual' | 'Shop Standard' | 'Catalog' | 'Param Sheet';
   refCode: string;
   pages: number;
-  status: 'Ready' | 'Indexing' | 'Processing' | 'Error';
+  status: 'Ready' | 'Indexing' | 'Processing' | 'Error' | 'Failed';
   progress?: number;
   dateAdded: string;
   vectorCount?: number;
@@ -70,6 +70,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
     pages: 50,
   });
   const [isUploading, setIsUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Subscribe to real Firestore `kb_docs` collection if accessible
   useEffect(() => {
@@ -156,12 +158,96 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
     setActiveChunks([]);
   }, [documents]);
 
-  // Execute RAG simulator search (disabled until Task 3)
-  const handleRunSimulation = () => {};
+  // Execute RAG simulator search
+  const handleRunSimulation = async () => {
+    if (!simQuery.trim()) return;
+    setIsSimulating(true);
+    const start = performance.now();
+    try {
+      const res = await apiFetch('/api/kb/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: simQuery.trim(),
+          controller: controllerFilter === 'all' ? 'generic' : controllerFilter,
+        }),
+      });
 
-  // Upload document handler (disabled until Task 3)
+      if (!res.ok) {
+        throw new Error('Simulation failed');
+      }
+
+      const data = await res.json();
+      const latency = Math.round(performance.now() - start);
+      setSimLatency(`${latency}ms`);
+
+      if (Array.isArray(data.chunks)) {
+        const mappedChunks: ChunkItem[] = data.chunks.map((c: any, idx: number) => ({
+          id: `sim-chunk-${idx}`,
+          section: c.documentName || 'OEM Manual',
+          page: c.pageNumber || 1,
+          matchScore: c.matchScore || Math.max(98 - idx * 6, 75),
+          tokens: Math.round((c.snippet || '').length / 4),
+          snippet: c.snippet || '',
+        }));
+        setActiveChunks(mappedChunks);
+      } else {
+        setActiveChunks([]);
+      }
+    } catch (err: any) {
+      console.error('[KnowledgeBase] Simulation error:', err);
+      setActiveChunks([]);
+    } finally {
+      setIsSimulating(false);
+    }
+  };
+
+  // Upload document handler
   const handleCreateDocument = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedFile) {
+      alert('Please select a document file to upload.');
+      return;
+    }
+    if (!isAdmin) {
+      alert('Only workshop administrators have permission to upload technical documents.');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('name', uploadState.name || selectedFile.name);
+      formData.append('controller', uploadState.controller);
+      formData.append('docType', uploadState.docType);
+      formData.append('refCode', uploadState.refCode);
+      formData.append('pages', String(uploadState.pages));
+
+      const res = await apiFetch('/api/kb/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Upload failed');
+      }
+
+      setUploadModalOpen(false);
+      setSelectedFile(null);
+      setUploadState({
+        name: '',
+        controller: 'Fanuc',
+        docType: 'OEM Manual',
+        refCode: '',
+        pages: 50,
+      });
+    } catch (err: any) {
+      alert(`Upload error: ${err.message || 'Could not upload document'}`);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   // Delete document handler
@@ -173,9 +259,16 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
     if (!confirm('Are you sure you want to remove this manual from the verified memory corpus?')) return;
 
     try {
-      await deleteDoc(doc(db, 'kb_docs', docId));
-    } catch {
+      const res = await apiFetch(`/api/kb/${docId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.message || 'Delete failed');
+      }
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err: any) {
+      alert(`Delete error: ${err.message || 'Could not delete document'}`);
     }
   };
 
@@ -243,8 +336,8 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               title="Knowledge Base & Shopfloor Memory"
               caption="Controller manuals, tooling catalog cut-sheets, and verified shop machining standards indexed for real-time retrieval."
               actions={
-                <ButtonPrimary disabled icon="upload_file">
-                  Upload available after setup
+                <ButtonPrimary onClick={() => setUploadModalOpen(true)} icon="upload_file">
+                  Upload Manual
                 </ButtonPrimary>
               }
             />
@@ -299,13 +392,14 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   </select>
                 </div>
 
-                <ButtonPrimary disabled icon="upload_file" className="min-w-[180px]">
-                  Upload available after setup
+                <ButtonPrimary onClick={() => setUploadModalOpen(true)} icon="upload_file" className="min-w-[180px]">
+                  Upload Manual
                 </ButtonPrimary>
               </Card>
 
               {/* Upload Drop Zone Area */}
               <div
+                onClick={() => setUploadModalOpen(true)}
                 className="bg-surface-container-low hover:bg-surface-container rounded-xl p-space-xl text-center transition-all cursor-pointer shadow-sm relative group border border-outline-variant/30 hover:border-primary-container/40"
                 id="dropzone"
               >
@@ -430,7 +524,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                                   Indexing ({docItem.progress || 82}%)
                                 </span>
                               )}
-                              {docItem.status === 'Error' && (
+                              {(docItem.status === 'Error' || docItem.status === 'Failed') && (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-error-container/20 text-error font-label-sm text-label-sm font-mono">
                                   <span className="w-1.5 h-1.5 rounded-full bg-error" />
                                   Failed
@@ -565,11 +659,11 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                       </span>
                       <button
                         onClick={handleRunSimulation}
-                        disabled={true}
+                        disabled={isSimulating || !simQuery.trim()}
                         className="px-space-sm py-1 bg-secondary text-surface-container-lowest font-label-sm text-label-sm font-bold font-mono rounded flex items-center gap-1 hover:bg-secondary-fixed transition-colors cursor-pointer disabled:opacity-75"
                         id="rag-run-btn"
                       >
-                        <span>SIMULATE</span>
+                        <span>{isSimulating ? 'SIMULATING...' : 'SIMULATE'}</span>
                         <span className="material-symbols-outlined text-[14px]">send</span>
                       </button>
                     </div>
@@ -582,7 +676,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                     Retrieved Chunks (HNSW Ranked)
                   </span>
                   <span className="font-label-sm text-label-sm font-mono text-secondary">
-                    Latency: --
+                    Latency: {simLatency || '--'}
                   </span>
                 </div>
 
@@ -799,13 +893,35 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-surface-container border border-dashed border-outline-variant/40 text-center flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-surface-container-high transition-colors group">
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="p-6 rounded-2xl bg-surface-container border border-dashed border-outline-variant/40 text-center flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-surface-container-high transition-colors group"
+          >
             <div className="w-12 h-12 rounded-full bg-surface-container-lowest flex items-center justify-center text-primary-container group-hover:scale-110 transition-transform">
               <span className="material-symbols-outlined text-[24px]">attach_file</span>
             </div>
-            <span className="font-mono text-xs text-secondary font-bold">Select Technical File</span>
+            <span className="font-mono text-xs text-secondary font-bold">
+              {selectedFile ? selectedFile.name : 'Select Technical File'}
+            </span>
             <span className="font-mono text-[10px] text-tertiary uppercase opacity-60">OCR & Tabular parsing enabled</span>
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            required
+            accept=".pdf,.docx,.xlsx,.csv,.txt,.png,.jpg,.jpeg"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                setSelectedFile(file);
+                if (!uploadState.name) {
+                  setUploadState((prev) => ({ ...prev, name: file.name.replace(/\.[^/.]+$/, '') }));
+                }
+              }
+            }}
+            className="px-3 py-2.5 rounded-xl bg-surface-container-low border border-outline-variant/30 text-on-surface font-body-sm text-sm focus:outline-none focus:border-primary-container"
+          />
 
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-outline-variant/20 mt-2">
             <ButtonSecondary type="button" onClick={() => setUploadModalOpen(false)}>
