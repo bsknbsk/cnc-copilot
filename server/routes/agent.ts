@@ -234,12 +234,24 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
     }
 
     if (base64Data) {
+      const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      if (!ALLOWED_MIME_TYPES.includes(mimeType.toLowerCase())) {
+        res.status(400).json({ error: 'invalid_image_type', message: 'Only JPEG, PNG, WEBP, and GIF images are allowed' });
+        return;
+      }
+
+      const buffer = Buffer.from(base64Data, 'base64');
+      const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15 MB
+      if (buffer.length > MAX_IMAGE_SIZE) {
+        res.status(400).json({ error: 'image_too_large', message: 'Image size exceeds 15 MB limit' });
+        return;
+      }
+
       try {
         const imageTimestamp = Date.now();
         const storagePath = `chats/${user.uid}/${effectiveChatId}/${imageTimestamp}.jpg`;
         const bucket = adminStorage.bucket();
         const file = bucket.file(storagePath);
-        const buffer = Buffer.from(base64Data, 'base64');
         await file.save(buffer, {
           metadata: { contentType: mimeType },
           resumable: false,

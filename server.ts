@@ -16,6 +16,10 @@ async function startServer() {
   const app = express();
 
   app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://aistudio.google.com;");
+
     const origin = req.headers.origin;
     if (origin && CORS_ALLOWLIST.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
