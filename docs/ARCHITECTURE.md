@@ -166,6 +166,16 @@ Where:
 - $\eta$: Machine transmission efficiency ($\approx 0.85$)
 - $n$: Spindle rotational speed (RPM)
 
+### 4.3. Real-Time 3D Kinematics and Chip Simulation
+The cutting calculator features an interactive Three.js viewport (`Calculator3DView.tsx`) visualizing tool-workpiece interaction in real time:
+- **Flute and Toolholder Geometry**: 4 high-contrast helical flutes with alternating tungsten carbide and protective coatings, gold TiN cutting inserts, and dual arbor drive keys rendering visible high-speed rotation proportional to calculated spindle RPM ($n$).
+- **Process-Specific Tool Paths**:
+  - *Milling*: Translates across the workpiece block ($X = -1.6$ to $+1.6$) at engagement depth.
+  - *Drilling / Tapping / Boring*: Sinusoidal plunge-and-retract cycle along the $Y$ axis.
+  - *Turning*: Radial engagement and axial traverse along the bar stock.
+- **Reactive Chip Ejection**: Particle emitter generating dynamic hot metal chip sparks with simulated parabolic trajectories and gravity when cutting edges engage stock.
+- **Synchronized Timeline Scrubber**: Directly maps to cut cycle completion percentage ($0\%$ to $100\%$) with play/pause, replay cycle reset, and $0.5\times / 1.0\times / 1.5\times$ speed multipliers.
+
 ---
 
 ## 5. Security, Access Control, and Governance

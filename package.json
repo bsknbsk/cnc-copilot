@@ -1,7 +1,8 @@
 {
-  "name": "react-example",
+  "name": "cnc-copilot",
+  "description": "AI-powered industrial shopfloor assistant and deterministic machining platform powered by Google Gemini and Cloud Run",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
