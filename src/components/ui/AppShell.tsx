@@ -21,9 +21,7 @@ export function AppShell({ children, currentTab, onNavigate }: AppShellProps) {
 
       <footer className="w-full bg-surface-container-lowest border-t border-outline-variant/20 hidden xl:block">
         <div className="w-full px-margin py-space-md flex items-center justify-between gap-space-sm font-label-sm text-label-sm text-tertiary">
-          <div className="flex items-center gap-space-sm font-mono">
-            <span>CNC COPILOT INDUSTRIAL TELEMETRY</span>
-          </div>
+          <div className="flex items-center gap-space-sm font-mono" />
           <div className="flex items-center gap-space-md font-mono">
             <span>CORE STATUS: {user ? 'SYNCED' : 'LOCAL'}</span>
             <span className="text-outline-variant">|</span>

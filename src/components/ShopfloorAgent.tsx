@@ -8,6 +8,9 @@ import {
   orderBy,
   addDoc,
   deleteDoc,
+  setDoc,
+  getDocs,
+  writeBatch,
 } from 'firebase/firestore';
 import { db, apiFetch } from '../lib/firebase.js';
 import { useAuth } from '../context/AuthContext.js';
@@ -27,6 +30,7 @@ export interface ChatSession {
   controller: string;
   updatedAt?: string | null;
   createdAt?: string | null;
+  isPinned?: boolean;
 }
 
 export interface ChatMessage {
@@ -46,6 +50,8 @@ export interface ChatMessage {
     documentName: string;
     pageNumber?: number | null;
     snippet: string;
+    docId?: string | null;
+    fileUrl?: string | null;
   }> | null;
   toolCalls?: Array<{
     name: string;
@@ -73,13 +79,30 @@ export function ShopfloorAgent({
   initialQuery,
   onNavigate,
 }: ShopfloorAgentProps) {
-  const { user, profile } = useAuth();
+  const { user, profile, updatePreferences } = useAuth();
+
+  const LANGUAGES = [
+    { code: 'en' as const, label: 'English', short: 'EN' },
+    { code: 'hi' as const, label: 'हिन्दी (Hindi)', short: 'HI' },
+    { code: 'ml' as const, label: 'മലയാളം (Malayalam)', short: 'ML' },
+    { code: 'ta' as const, label: 'தமிழ் (Tamil)', short: 'TA' },
+  ];
+
+  const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'hi' | 'ml' | 'ta'>(
+    (profile?.preferredLanguage as any) || 'en'
+  );
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
 
   // Chat sessions state
   const [chats, setChats] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId || null);
   const [loadingChats, setLoadingChats] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [controllerFilter, setControllerFilter] = useState<'all' | 'fanuc' | 'mitsubishi' | 'generic'>('all');
+
+  // 3-dot dropdown menu & hard delete modal state
+  const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null);
+  const [chatToDelete, setChatToDelete] = useState<ChatSession | null>(null);
 
   // Active messages state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -88,6 +111,12 @@ export function ShopfloorAgent({
   // Input state
   const [inputText, setInputText] = useState<string>(initialQuery || '');
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{
+    name: string;
+    type: string;
+    base64: string;
+    size: number;
+  } | null>(null);
   const [isSending, setIsSending] = useState<boolean>(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -98,6 +127,11 @@ export function ShopfloorAgent({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
+
+  // Press-to-talk refs
+  const autoSubmitRef = useRef<boolean>(false);
+  const isLongPressRef = useRef<boolean>(false);
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Camera modal state
   const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
@@ -120,6 +154,7 @@ export function ShopfloorAgent({
     documentName: string;
     pageNumber?: number | null;
     snippet: string;
+    fileUrl?: string | null;
   } | null>(null);
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
@@ -213,6 +248,7 @@ export function ShopfloorAgent({
             controller: data.controller || 'Fanuc 0i-MF',
             updatedAt: data.updatedAt || null,
             createdAt: data.createdAt || null,
+            isPinned: Boolean(data.isPinned),
           });
         });
 
@@ -296,19 +332,45 @@ export function ShopfloorAgent({
   }, [activeChatId, user?.uid]);
 
   const filteredChats = useMemo(() => {
-    if (!searchQuery) return chats;
-    const q = searchQuery.toLowerCase();
-    return chats.filter(c => 
-      c.title.toLowerCase().includes(q) || 
-      c.controller.toLowerCase().includes(q)
-    );
-  }, [chats, searchQuery]);
+    let list = chats;
+    if (controllerFilter !== 'all') {
+      list = list.filter((c) => {
+        const cCtrl = (c.controller || '').toLowerCase();
+        if (controllerFilter === 'fanuc') return cCtrl.includes('fanuc');
+        if (controllerFilter === 'mitsubishi') return cCtrl.includes('mitsu');
+        if (controllerFilter === 'generic') return cCtrl.includes('generic') || cCtrl.includes('iso');
+        return true;
+      });
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((c) => 
+        c.title.toLowerCase().includes(q) || 
+        c.controller.toLowerCase().includes(q)
+      );
+    }
+    return [...list].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return bTime - aTime;
+    });
+  }, [chats, controllerFilter, searchQuery]);
 
   const activeChat = useMemo(() => {
     return chats.find(c => c.id === activeChatId);
   }, [chats, activeChatId]);
 
   const handleCreateNewChat = async () => {
+    // 3a) Stop creating multiple blank sessions if already a blank session is open
+    if (messages.length === 0 && activeChatId) {
+      return;
+    }
+    if (chats.some((c) => c.id === activeChatId && messages.length === 0)) {
+      return;
+    }
+
     if (!user?.uid) {
       const newGuestId = `guest-${Date.now()}`;
       const newSession: ChatSession = {
@@ -316,6 +378,7 @@ export function ShopfloorAgent({
         title: 'New Diagnostic Session',
         controller: activeController,
         updatedAt: new Date().toISOString(),
+        isPinned: false,
       };
       setChats((prev) => [newSession, ...prev]);
       setActiveChatId(newGuestId);
@@ -329,6 +392,7 @@ export function ShopfloorAgent({
         controller: activeController,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        isPinned: false,
       });
       setActiveChatId(docRef.id);
       setMessages([]);
@@ -337,25 +401,148 @@ export function ShopfloorAgent({
     }
   };
 
-  const handleDeleteChat = async (chatId: string) => {
+  const handleTogglePinChat = async (chat: ChatSession) => {
+    const newPinned = !chat.isPinned;
+    setChats((prev) =>
+      prev.map((c) => (c.id === chat.id ? { ...c, isPinned: newPinned } : c))
+    );
+    if (user?.uid) {
+      try {
+        await setDoc(
+          doc(db, 'users', user.uid, 'chats', chat.id),
+          { isPinned: newPinned },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Pin chat update notice:', err);
+      }
+    }
+  };
+
+  const handleExportChat = async (chatSession?: ChatSession | null, msgsToExport?: ChatMessage[]) => {
+    const session = chatSession || activeChat;
+    if (!session) return;
+
+    let exportMsgs = msgsToExport || messages;
+    if (!msgsToExport && session.id !== activeChatId && user?.uid) {
+      try {
+        const snap = await getDocs(
+          query(
+            collection(db, 'users', user.uid, 'chats', session.id, 'messages'),
+            orderBy('createdAt', 'asc')
+          )
+        );
+        const fetched: ChatMessage[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          fetched.push({
+            id: d.id,
+            role: data.role,
+            text: data.text || '',
+            intent: data.intent,
+            diagnosis: data.diagnosis,
+            citations: data.citations,
+            createdAt: data.createdAt,
+          });
+        });
+        if (fetched.length > 0) exportMsgs = fetched;
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Export fetch messages notice:', err);
+      }
+    }
+
+    const titleClean = session.title.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dateFormatted = new Date().toISOString().split('T')[0];
+    const operatorName = profile?.displayName || user?.displayName || 'Operator';
+
+    let content = `# CNC Copilot Industrial Diagnostic Report\n\n`;
+    content += `- **Session Title:** ${session.title}\n`;
+    content += `- **Machine Controller:** ${session.controller}\n`;
+    content += `- **Export Date:** ${new Date().toLocaleString()}\n`;
+    content += `- **Operator:** ${operatorName}\n\n`;
+    content += `---\n\n## Diagnostic Transcript\n\n`;
+
+    if (exportMsgs.length === 0) {
+      content += `*(No messages recorded in this diagnostic session)*\n`;
+    } else {
+      exportMsgs.forEach((m, idx) => {
+        const roleLabel = m.role === 'user' ? `[Operator] ${operatorName}` : `[AI Copilot] CNC Copilot Physics Engine`;
+        const timeLabel = m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : `Step ${idx + 1}`;
+        content += `### ${roleLabel} (${timeLabel})\n\n`;
+        content += `${m.text}\n\n`;
+
+        if (m.diagnosis) {
+          if (m.diagnosis.alarmCode || m.diagnosis.alarmText) {
+            content += `**Alarm:** ${m.diagnosis.alarmCode || ''} ${m.diagnosis.alarmText || ''}\n\n`;
+          }
+          if (m.diagnosis.likelyCauses && m.diagnosis.likelyCauses.length > 0) {
+            content += `**Likely Causes:**\n${m.diagnosis.likelyCauses.map((c) => `- ${c}`).join('\n')}\n\n`;
+          }
+          if (m.diagnosis.steps && m.diagnosis.steps.length > 0) {
+            content += `**Remediation Steps:**\n${m.diagnosis.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\n`;
+          }
+          if (m.diagnosis.safetyNote) {
+            content += `> **Safety Notice:** ${m.diagnosis.safetyNote}\n\n`;
+          }
+        }
+
+        if (m.citations && m.citations.length > 0) {
+          content += `**Verified Citations:**\n`;
+          m.citations.forEach((c) => {
+            content += `- **${c.documentName}**${c.pageNumber ? ` (Page ${c.pageNumber})` : ''}: "${c.snippet}"\n`;
+          });
+          content += `\n`;
+        }
+        content += `---\n\n`;
+      });
+    }
+
+    content += `*Report generated by CNC Copilot v2.4 Core - AI explains. Physics decides.*\n`;
+
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `CNC_Diagnostic_${session.controller.split(' ')[0]}_${titleClean}_${dateFormatted}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleConfirmDelete = async (chatId: string) => {
     if (!user?.uid) {
       setChats((prev) => prev.filter((c) => c.id !== chatId));
       if (activeChatId === chatId) {
-        setActiveChatId(null);
+        const remaining = chats.filter((c) => c.id !== chatId);
+        setActiveChatId(remaining.length > 0 ? remaining[0].id : null);
         setMessages([]);
       }
+      setChatToDelete(null);
       return;
     }
 
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'chats', chatId));
-      if (activeChatId === chatId) {
-        setActiveChatId(null);
-        setMessages([]);
+      const msgsSnap = await getDocs(
+        collection(db, 'users', user.uid, 'chats', chatId, 'messages')
+      );
+      if (!msgsSnap.empty) {
+        const batch = writeBatch(db);
+        msgsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+        await batch.commit();
       }
+      await deleteDoc(doc(db, 'users', user.uid, 'chats', chatId));
     } catch (err) {
       console.warn('[ShopfloorAgent] Delete chat failed:', err);
     }
+
+    setChats((prev) => prev.filter((c) => c.id !== chatId));
+    if (activeChatId === chatId) {
+      const remaining = chats.filter((c) => c.id !== chatId);
+      setActiveChatId(remaining.length > 0 ? remaining[0].id : null);
+      setMessages([]);
+    }
+    setChatToDelete(null);
   };
 
   const processImageFile = (fileOrBlob: Blob | File): Promise<string> => {
@@ -501,22 +688,43 @@ export function ShopfloorAgent({
     if (!file) return;
     e.target.value = '';
 
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      setComposerError('Image too large. Use a photo under 5 MB.');
+    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain'];
+    if (!ALLOWED.includes(file.type)) {
+      setComposerError('File must be JPG, PNG, WEBP, or PDF under 10 MB.');
       return;
     }
 
-    try {
-      const resized = await processImageFile(file);
-      const size = getBase64ByteSize(resized);
-      if (size > 5 * 1024 * 1024) {
-        setComposerError('Image too large. Use a photo under 5 MB.');
-        return;
+    if (file.size > 10 * 1024 * 1024) {
+      setComposerError('File must be JPG, PNG, WEBP, or PDF under 10 MB.');
+      return;
+    }
+
+    setComposerError(null);
+
+    if (file.type.startsWith('image/')) {
+      try {
+        const resized = await processImageFile(file);
+        setAttachedImage(resized);
+        setAttachedFile(null);
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Attachment image process error:', err);
+        setComposerError('Failed to process image file.');
       }
-      setComposerError(null);
-      setAttachedImage(resized);
-    } catch (err) {
-      console.warn('[ShopfloorAgent] Attachment error:', err);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.includes('base64,') ? result.split('base64,')[1] : result;
+        setAttachedFile({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          base64,
+        });
+        setAttachedImage(null);
+      };
+      reader.onerror = () => setComposerError('Failed to read document.');
+      reader.readAsDataURL(file);
     }
   };
 
@@ -574,6 +782,7 @@ export function ShopfloorAgent({
           const formData = new FormData();
           const ext = mimeTypeToUse.includes('mp4') ? 'mp4' : mimeTypeToUse.includes('ogg') ? 'ogg' : 'webm';
           formData.append('audio', audioBlob, `speech.${ext}`);
+          formData.append('language', selectedLanguage);
 
           const res = await apiFetch('/api/agent/transcribe', {
             method: 'POST',
@@ -585,13 +794,21 @@ export function ShopfloorAgent({
           }
           const data = await res.json();
           if (data.transcript) {
-            setInputText((prev) => (prev ? `${prev} ${data.transcript}` : data.transcript));
+            if (autoSubmitRef.current) {
+              // Press and hold: submit directly
+              handleSendMessage(data.transcript);
+            } else {
+              // Click toggle: append to input text
+              setInputText((prev) => (prev ? `${prev} ${data.transcript}` : data.transcript));
+            }
           }
         } catch (err: any) {
           console.warn('[ShopfloorAgent] Transcribe error:', err);
+          setComposerError('Could not transcribe audio. Please retry or speak closer to microphone.');
         } finally {
           setRecordingState('idle');
           setRecordingSeconds(0);
+          autoSubmitRef.current = false;
         }
       };
 
@@ -630,6 +847,35 @@ export function ShopfloorAgent({
     }
   };
 
+  const handleMicMouseDown = () => {
+    if (recordingState === 'transcribing') return;
+    isLongPressRef.current = false;
+    pressTimerRef.current = setTimeout(() => {
+      isLongPressRef.current = true;
+      autoSubmitRef.current = true;
+      if (recordingState === 'idle') {
+        startRecording();
+      }
+    }, 350);
+  };
+
+  const handleMicMouseUp = () => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    if (isLongPressRef.current) {
+      isLongPressRef.current = false;
+      stopRecording();
+    }
+  };
+
+  const handleMicClick = () => {
+    if (recordingState === 'transcribing') return;
+    autoSubmitRef.current = false;
+    handleToggleVoice();
+  };
+
   useEffect(() => {
     if (initialCamera) {
       handleStartCamera();
@@ -639,18 +885,20 @@ export function ShopfloorAgent({
   const handleSendMessage = async (textToSend?: string) => {
     const queryText = (textToSend || inputText).trim();
     const queryImage = attachedImage;
+    const queryFile = attachedFile;
 
-    if (!queryText && !queryImage) return;
+    if (!queryText && !queryImage && !queryFile) return;
 
     let targetChatId = activeChatId;
     if (!targetChatId) {
       if (user?.uid) {
         try {
           const docRef = await addDoc(collection(db, 'users', user.uid, 'chats'), {
-            title: queryText.slice(0, 32) || 'Camera Alarm Diagnostic',
+            title: queryText.slice(0, 32) || (queryFile ? queryFile.name.slice(0, 32) : 'Camera Alarm Diagnostic'),
             controller: activeController,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
+            isPinned: false,
           });
           targetChatId = docRef.id;
           setActiveChatId(targetChatId);
@@ -667,7 +915,7 @@ export function ShopfloorAgent({
     const tempUserMsg: ChatMessage = {
       id: `temp-${Date.now()}`,
       role: 'user',
-      text: queryText,
+      text: queryText || (queryFile ? `Uploaded document: ${queryFile.name}` : 'Pendant Snapshot'),
       imageUrl: queryImage,
       createdAt: new Date().toISOString(),
     };
@@ -675,6 +923,7 @@ export function ShopfloorAgent({
     setMessages((prev) => [...(Array.isArray(prev) ? prev : []), tempUserMsg]);
     setInputText('');
     setAttachedImage(null);
+    setAttachedFile(null);
     setIsSending(true);
 
     try {
@@ -684,8 +933,9 @@ export function ShopfloorAgent({
         body: JSON.stringify({
           message: queryText,
           image: queryImage,
+          fileData: queryFile ? { name: queryFile.name, type: queryFile.type, base64: queryFile.base64 } : null,
           controller: activeController,
-          language: profile?.preferredLanguage || 'en',
+          language: selectedLanguage,
           chatId: targetChatId,
         }),
       });
@@ -768,7 +1018,7 @@ export function ShopfloorAgent({
         body: JSON.stringify({
           messageId: msg.id,
           text: msg.text,
-          language: profile?.preferredLanguage || 'en',
+          language: selectedLanguage,
         }),
       });
 
@@ -836,6 +1086,32 @@ export function ShopfloorAgent({
                 className="px-2"
               />
 
+              {/* Controller Filter Chips */}
+              <div className="flex items-center gap-1 px-1 mb-2 overflow-x-auto scrollbar-none">
+                {[
+                  { id: 'all' as const, label: 'All' },
+                  { id: 'fanuc' as const, label: 'Fanuc' },
+                  { id: 'mitsubishi' as const, label: 'Mitsu' },
+                  { id: 'generic' as const, label: 'Generic' },
+                ].map((f) => {
+                  const isSel = controllerFilter === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setControllerFilter(f.id)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors whitespace-nowrap ${
+                        isSel
+                          ? 'bg-secondary text-surface-container-lowest font-bold shadow-sm'
+                          : 'bg-surface-container text-tertiary hover:text-on-surface'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {loadingChats ? (
                 <div className="flex flex-col gap-2 p-2">
                   <Skeleton className="h-16" />
@@ -857,27 +1133,91 @@ export function ShopfloorAgent({
                   >
                     {activeChatId === chat.id && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary-container rounded-l"></div>}
                     <div className="flex items-start justify-between gap-1 mb-1">
-                      <span className={`font-headline-sm text-body-md ${activeChatId === chat.id ? 'text-on-surface font-semibold' : 'text-tertiary group-hover:text-on-surface'} line-clamp-1 transition-colors`}>
-                        {chat.title}
-                      </span>
+                      <div className="flex items-center gap-1 min-w-0">
+                        {chat.isPinned && (
+                          <span className="material-symbols-outlined text-[13px] text-secondary flex-shrink-0" title="Pinned chat">
+                            push_pin
+                          </span>
+                        )}
+                        <span className={`font-headline-sm text-body-md ${activeChatId === chat.id ? 'text-on-surface font-semibold' : 'text-tertiary group-hover:text-on-surface'} line-clamp-1 transition-colors`}>
+                          {chat.title}
+                        </span>
+                      </div>
                       <Badge variant={activeChatId === chat.id ? 'primary' : 'tertiary'}>
                         {chat.controller.split(' ')[0]}
                       </Badge>
                     </div>
                     <div className="flex items-center justify-between text-tertiary font-label-sm text-label-sm font-mono">
                       <span>{getRelativeTime(chat.updatedAt)}</span>
-                      {activeChatId === chat.id ? (
-                        <span className="text-secondary flex items-center gap-1 font-semibold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>ACTIVE
-                        </span>
-                      ) : (
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleDeleteChat(chat.id); }}
-                          className="opacity-0 group-hover:opacity-100 hover:text-error transition-opacity font-bold"
-                        >
-                          DELETE
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        {activeChatId === chat.id && (
+                          <span className="text-secondary flex items-center gap-1 font-semibold text-[10px]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block"></span>ACTIVE
+                          </span>
+                        )}
+
+                        {/* 3-Dot Dropdown Menu */}
+                        <div className="relative">
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMenuOpenChatId(menuOpenChatId === chat.id ? null : chat.id);
+                            }}
+                            className="p-1 rounded text-tertiary hover:text-on-surface hover:bg-surface-container-high transition-colors"
+                            title="Chat options"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">more_vert</span>
+                          </button>
+
+                          {menuOpenChatId === chat.id && (
+                            <div 
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-0 top-full mt-1 w-36 rounded-lg bg-surface-container-high border border-outline-variant shadow-2xl py-1 z-40 text-xs font-mono"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleTogglePinChat(chat);
+                                  setMenuOpenChatId(null);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-surface-container flex items-center gap-2 text-on-surface transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[15px] text-secondary">
+                                  {chat.isPinned ? 'keep_off' : 'push_pin'}
+                                </span>
+                                <span>{chat.isPinned ? 'Unpin Chat' : 'Pin Chat'}</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleExportChat(chat);
+                                  setMenuOpenChatId(null);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-surface-container flex items-center gap-2 text-on-surface transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[15px] text-primary">download</span>
+                                <span>Export Chat</span>
+                              </button>
+
+                              <div className="border-t border-surface-container my-1"></div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setChatToDelete(chat);
+                                  setMenuOpenChatId(null);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-error-container/20 flex items-center gap-2 text-error transition-colors"
+                              >
+                                <span className="material-symbols-outlined text-[15px]">delete</span>
+                                <span>Delete Chat</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -934,10 +1274,18 @@ export function ShopfloorAgent({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <ButtonSecondary onClick={() => {}} icon="picture_as_pdf" className="h-9 px-3">
+                <ButtonSecondary onClick={() => handleExportChat(activeChat, messages)} icon="picture_as_pdf" className="h-9 px-3">
                   <span className="hidden md:inline">Export</span>
                 </ButtonSecondary>
-                <IconButton icon="delete_sweep" onClick={() => setMessages([])} title="Clear Conversation" className="w-9 h-9 min-w-0 min-h-0" />
+                <IconButton 
+                  icon="delete_sweep" 
+                  onClick={() => {
+                    if (activeChat) setChatToDelete(activeChat);
+                    else setMessages([]);
+                  }} 
+                  title="Delete Conversation" 
+                  className="w-9 h-9 min-w-0 min-h-0" 
+                />
               </div>
             </header>
 
@@ -1056,15 +1404,18 @@ export function ShopfloorAgent({
                                 <div className="pt-2 flex flex-wrap items-center gap-2">
                                   <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
                                   {msg.citations.map((c, i) => (
-                                    <button
+                                    <a
                                       key={i}
-                                      type="button"
-                                      onClick={() => setSelectedCitation(c)}
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
+                                      href={c.fileUrl || `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
+                                      title="Open manual file in new tab"
                                     >
                                       <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                      {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
-                                    </button>
+                                      <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
+                                      <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
+                                    </a>
                                   ))}
                                 </div>
                               )}
@@ -1169,15 +1520,18 @@ export function ShopfloorAgent({
                               <div className="pt-2 flex flex-wrap items-center gap-2">
                                 <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
                                 {msg.citations.map((c, i) => (
-                                  <button
+                                  <a
                                     key={i}
-                                    type="button"
-                                    onClick={() => setSelectedCitation(c)}
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
+                                    href={c.fileUrl || `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
+                                    title="Open manual file in new tab"
                                   >
                                     <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                    {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
-                                  </button>
+                                    <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
+                                    <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
+                                  </a>
                                 ))}
                               </div>
                             )}
@@ -1266,6 +1620,27 @@ export function ShopfloorAgent({
                     />
                   </div>
                 )}
+                {attachedFile && (
+                  <div className="flex items-center gap-2 p-1.5 pl-2 pr-1 rounded-lg bg-surface-container border border-outline-variant/30 w-fit">
+                    <span className="material-symbols-outlined text-primary text-[20px]">
+                      {attachedFile.type === 'application/pdf' ? 'picture_as_pdf' : 'description'}
+                    </span>
+                    <div className="flex flex-col">
+                      <span className="font-mono text-label-sm text-on-surface truncate max-w-[200px]">
+                        {attachedFile.name}
+                      </span>
+                      <span className="text-[10px] text-tertiary font-mono">
+                        {(attachedFile.size / 1024 / 1024).toFixed(1)} MB
+                      </span>
+                    </div>
+                    <IconButton
+                      icon="close"
+                      title="Remove file"
+                      onClick={() => setAttachedFile(null)}
+                      className="w-7 h-7 min-w-0 min-h-0 text-tertiary hover:text-error"
+                    />
+                  </div>
+                )}
                 {composerError && (
                   <div className="p-2.5 rounded bg-error-container/20 border border-error/30 text-error text-body-sm flex items-center justify-between gap-2">
                     <span>{composerError}</span>
@@ -1293,12 +1668,16 @@ export function ShopfloorAgent({
                     </button>
                     <input ref={cameraFallbackInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraFallbackSelect} />
 
-                    {/* Push to Talk Mic */}
+                    {/* Push to Talk Mic: Click to toggle or Hold to speak */}
                     <button 
-                      onClick={handleToggleVoice}
+                      onClick={handleMicClick}
+                      onMouseDown={handleMicMouseDown}
+                      onMouseUp={handleMicMouseUp}
+                      onTouchStart={handleMicMouseDown}
+                      onTouchEnd={handleMicMouseUp}
                       disabled={recordingState === 'transcribing'}
-                      className={`h-10 px-3 sm:px-4 rounded-lg bg-surface-container hover:bg-surface-container-high ${recordingState === 'recording' ? 'text-error' : 'text-primary'} flex items-center gap-2 transition-all group relative overflow-hidden`} 
-                      title="Voice Agent" 
+                      className={`h-10 px-3 sm:px-4 rounded-lg bg-surface-container hover:bg-surface-container-high ${recordingState === 'recording' ? 'text-error ring-1 ring-error/50' : 'text-primary'} flex items-center gap-2 transition-all group relative overflow-hidden select-none cursor-pointer`} 
+                      title="Click to toggle or Press & Hold to speak" 
                       type="button"
                     >
                       <span className="relative flex h-2.5 w-2.5">
@@ -1318,26 +1697,73 @@ export function ShopfloorAgent({
                     {/* Attachment Paperclip */}
                     <button
                       onClick={() => attachmentInputRef.current?.click()}
-                      className="h-10 w-10 sm:h-11 sm:w-11 rounded-lg bg-surface-container hover:bg-surface-container-high text-tertiary hover:text-on-surface flex items-center justify-center transition-colors"
-                      title="Attach photo"
+                      className={`h-10 w-10 sm:h-11 sm:w-11 rounded-lg ${attachedFile ? 'bg-primary/20 text-primary' : 'bg-surface-container text-tertiary'} hover:bg-surface-container-high hover:text-on-surface flex items-center justify-center transition-colors relative`}
+                      title="Attach photo or document (PDF)"
                       type="button"
                     >
                       <span className="material-symbols-outlined text-[20px]">attach_file</span>
+                      {attachedFile && <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary"></div>}
                     </button>
                     <input
                       ref={attachmentInputRef}
                       type="file"
-                      accept="image/jpeg,image/png,image/webp"
+                      accept="image/jpeg,image/png,image/webp,application/pdf,text/plain"
                       className="hidden"
                       onChange={handleAttachmentSelect}
                     />
+
+                    {/* Language Preference Dropdown Button */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setLangMenuOpen(!langMenuOpen)}
+                        className="h-10 px-2 sm:px-2.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-tertiary hover:text-on-surface flex items-center gap-1 transition-colors border border-outline-variant/30"
+                        title="Language Preference"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">translate</span>
+                        <span className="font-mono text-xs font-bold text-on-surface uppercase">
+                          {LANGUAGES.find((l) => l.code === selectedLanguage)?.short || 'EN'}
+                        </span>
+                      </button>
+
+                      {langMenuOpen && (
+                        <div className="absolute bottom-full mb-2 left-0 w-44 rounded-xl bg-surface-container-high border border-outline-variant shadow-2xl py-1 z-50">
+                          <div className="px-3 py-1.5 border-b border-surface-container text-[10px] font-mono uppercase text-tertiary tracking-wider">
+                            Language Preference
+                          </div>
+                          {LANGUAGES.map((l) => (
+                            <button
+                              key={l.code}
+                              type="button"
+                              onClick={() => {
+                                setSelectedLanguage(l.code);
+                                setLangMenuOpen(false);
+                                if (user) {
+                                  updatePreferences({ preferredLanguage: l.code });
+                                }
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between hover:bg-surface-container transition-colors ${
+                                selectedLanguage === l.code
+                                  ? 'text-secondary font-bold bg-secondary/10'
+                                  : 'text-on-surface'
+                              }`}
+                            >
+                              <span>{l.label}</span>
+                              {selectedLanguage === l.code && (
+                                <span className="material-symbols-outlined text-[14px]">check</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Send Action Button */}
                   <IconButton 
                     icon="arrow_upward"
                     onClick={() => handleSendMessage()}
-                    disabled={isSending || (!inputText.trim() && !attachedImage)}
+                    disabled={isSending || (!inputText.trim() && !attachedImage && !attachedFile)}
                     className="w-12 h-12 rounded-full bg-primary-container text-on-primary shadow-lg shadow-primary-container/25"
                   />
                 </div>
@@ -1446,6 +1872,34 @@ export function ShopfloorAgent({
           </div>
         )}
       </Drawer>
+
+      {/* Delete Chat Confirmation Modal */}
+      {chatToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl bg-surface-container border border-outline-variant shadow-2xl p-6 flex flex-col gap-4">
+            <div className="flex items-center gap-3 text-error">
+              <span className="material-symbols-outlined text-[28px]">warning</span>
+              <h3 className="font-headline-sm text-base font-bold text-on-surface">
+                Delete Diagnostic Session?
+              </h3>
+            </div>
+            <p className="text-body-sm text-tertiary">
+              Are you sure you want to permanently delete <strong className="text-on-surface font-mono">"{chatToDelete.title}"</strong>? All conversation logs and diagnostic telemetry will be removed. This cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <ButtonSecondary onClick={() => setChatToDelete(null)}>Cancel</ButtonSecondary>
+              <button
+                type="button"
+                onClick={() => handleConfirmDelete(chatToDelete.id)}
+                className="h-10 px-4 rounded-lg bg-error text-on-error font-mono text-xs font-bold hover:brightness-110 active:scale-95 transition-all shadow-md flex items-center gap-1.5"
+              >
+                <span className="material-symbols-outlined text-[18px]">delete_forever</span>
+                <span>Delete Permanently</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

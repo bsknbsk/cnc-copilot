@@ -209,7 +209,7 @@ const toolDeclarations: FunctionDeclaration[] = [
 
 const audioUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
 const agentResponseSchema = {
@@ -221,6 +221,19 @@ const agentResponseSchema = {
     },
     answerMarkdown: {
       type: Type.STRING,
+    },
+    citations: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          docId: { type: Type.STRING, nullable: true },
+          documentName: { type: Type.STRING },
+          pageNumber: { type: Type.INTEGER, nullable: true },
+          snippet: { type: Type.STRING },
+        },
+        required: ['documentName', 'snippet'],
+      },
     },
     diagnosis: {
       type: Type.OBJECT,
@@ -254,12 +267,12 @@ const agentResponseSchema = {
 // 1. Diagnostic Chat endpoint
 agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Response) => {
   const startTime = Date.now();
-  const { message, image, imageBase64, controller = 'Fanuc 0i-MF', language = 'en', chatId } = req.body;
+  const { message, image, imageBase64, fileData, controller = 'Fanuc 0i-MF', language = 'en', chatId } = req.body;
   const rawImage = imageBase64 || image;
   const user = req.user!;
 
-  if (!message && !rawImage) {
-    res.status(400).json({ error: 'missing_input', message: 'Message or image snapshot is required' });
+  if (!message && !rawImage && !fileData) {
+    res.status(400).json({ error: 'missing_input', message: 'Message, photo, or document is required' });
     return;
   }
 
@@ -268,7 +281,37 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
   let mimeType = 'image/jpeg';
   let base64Data: string | null = null;
 
-  // 1. If image present, upload to Cloud Storage at chats/{uid}/{chatId}/{timestamp}.jpg
+  // Multimodal file/photo validation guardrail
+  const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain'];
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+  // 1. If fileData present (PDF, text, or image)
+  let attachedPdfOrDoc: { mimeType: string; data: string; name?: string } | null = null;
+  if (fileData && typeof fileData === 'object' && fileData.base64) {
+    const fileMime = (fileData.type || 'application/pdf').toLowerCase();
+    if (!ALLOWED_MIME_TYPES.includes(fileMime)) {
+      res.status(400).json({
+        error: 'invalid_multimodal_input',
+        message: 'File must be JPG, PNG, WEBP, or PDF under 10 MB.',
+      });
+      return;
+    }
+    const fileBuf = Buffer.from(fileData.base64, 'base64');
+    if (fileBuf.length > MAX_FILE_SIZE) {
+      res.status(400).json({
+        error: 'invalid_multimodal_input',
+        message: 'File must be JPG, PNG, WEBP, or PDF under 10 MB.',
+      });
+      return;
+    }
+    attachedPdfOrDoc = {
+      mimeType: fileMime,
+      data: fileData.base64,
+      name: fileData.name,
+    };
+  }
+
+  // 2. If image present, upload to Cloud Storage at chats/{uid}/{chatId}/{timestamp}.jpg
   if (rawImage && typeof rawImage === 'string') {
     if (rawImage.includes('base64,')) {
       const mimeMatch = rawImage.match(/^data:([^;]+);base64,/);
@@ -279,16 +322,20 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
     }
 
     if (base64Data) {
-      const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
       if (!ALLOWED_MIME_TYPES.includes(mimeType.toLowerCase())) {
-        res.status(400).json({ error: 'unsupported_image', message: 'Only JPEG, PNG, and WEBP images are allowed' });
+        res.status(400).json({
+          error: 'invalid_multimodal_input',
+          message: 'File must be JPG, PNG, WEBP, or PDF under 10 MB.',
+        });
         return;
       }
 
       const buffer = Buffer.from(base64Data, 'base64');
-      const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
-      if (buffer.length > MAX_IMAGE_SIZE) {
-        res.status(400).json({ error: 'unsupported_image', message: 'Image size exceeds 5 MB limit' });
+      if (buffer.length > MAX_FILE_SIZE) {
+        res.status(400).json({
+          error: 'invalid_multimodal_input',
+          message: 'File must be JPG, PNG, WEBP, or PDF under 10 MB.',
+        });
         return;
       }
 
@@ -310,14 +357,49 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
     }
   }
 
-  const systemInstruction = `You are CNC Copilot, a shopfloor assistant for CNC operators and manufacturing engineers on ${controller} controllers. Reply in ${language}; keep G-codes, alarm numbers and parameter numbers in original form.
+  // Query available KB documents from Firestore to ground citations
+  const availableDocs: Array<{ id: string; name: string; refCode?: string; pages?: number; controller?: string }> = [];
+  try {
+    const kbSnap = await adminDb.collection('kb_docs').where('status', '==', 'Ready').get();
+    kbSnap.forEach((d) => {
+      const data = d.data();
+      availableDocs.push({
+        id: d.id,
+        name: data.name,
+        refCode: data.refCode,
+        pages: data.pages,
+        controller: data.controller,
+      });
+    });
+  } catch (err: any) {
+    console.warn(JSON.stringify({ level: 'warn', route: 'POST /api/agent/chat:fetchKB', error: err?.message || String(err) }));
+  }
+
+  const langNames: Record<string, string> = {
+    en: 'English',
+    hi: 'Hindi',
+    ml: 'Malayalam',
+    ta: 'Tamil',
+  };
+  const targetLanguageName = langNames[language] || 'English';
+
+  const systemInstruction = `You are CNC Copilot, an industrial shopfloor assistant for CNC operators and manufacturing engineers on ${controller} controllers.
+Reply entirely in ${targetLanguageName} (${language}); keep G-codes, alarm numbers and parameter numbers in original standard form.
 Decide the intent of the operator's message and answer in the matching style:
 - greeting or small talk: one or two friendly sentences, then one line offering help with alarms, cutting parameters, G-code or the Crash Lab. No headings, no lists.
 - general CNC question: a direct answer in plain markdown, short paragraphs or a short list, under 180 words unless asked for detail.
 - alarm or fault (an alarm number, an error text, a controller screen photo, or a described machine fault): a diagnosis.
 - cutting parameters, speeds, feeds, power: explain the numbers given by the calculation tool; never invent numbers.
 - G-code question: explain the code plainly.
-Never claim you checked manuals, registers, sensors or telemetry unless the retrieved passages are provided in this request. Never state a confidence score. When resetting alarms, changing parameters or bypassing interlocks is involved, start with a one-line safety warning.`;
+
+Knowledge Base Manual Grounding:
+Uploaded shopfloor manuals available:
+${availableDocs.length > 0 ? availableDocs.map(d => `- ID: ${d.id} | "${d.name}" | Controller: ${d.controller || 'Generic'} | Pages: ${d.pages || 1}`).join('\n') : 'No manuals currently uploaded.'}
+
+If your answer retrieves and cites specific passages from any uploaded manual listed above, populate the citations list with the documentName, matching docId, pageNumber (if known), and snippet.
+If the requested information is not in the uploaded manuals, return an empty citations array (citations: []).
+Never claim you checked manuals, registers, sensors or telemetry unless citations are populated. Never state a confidence score.
+When resetting alarms, changing parameters or bypassing interlocks is involved, provide a concise one-line safety note.`;
 
   try {
     const ai = getGemini();
@@ -331,7 +413,17 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
         },
       });
       parts.push({
-        text: `The image shows a CNC controller screen. First read out the alarm number, alarm text, mode and any axis values you can see, then answer.\n\n${message || 'Analyze the controller screen.'}`,
+        text: `The image shows a CNC controller screen. Read out any alarm number, alarm text, mode and axis coordinates, then provide remedies.\n\n${message || 'Analyze the controller screen.'}`,
+      });
+    } else if (attachedPdfOrDoc) {
+      parts.push({
+        inlineData: {
+          mimeType: attachedPdfOrDoc.mimeType,
+          data: attachedPdfOrDoc.data,
+        },
+      });
+      parts.push({
+        text: `Attached file: ${attachedPdfOrDoc.name || 'document'}.\n\n${message || 'Analyze the attached document.'}`,
       });
     } else {
       parts.push({ text: message || 'Analyze the machine condition.' });
@@ -351,6 +443,7 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
 
     let intent: 'greeting' | 'general' | 'diagnosis' | 'calculation' | 'gcode' = 'general';
     let answerMarkdown = '';
+    const citations: any[] = [];
     let diagnosis: {
       alarmCode: string | null;
       alarmText: string | null;
@@ -364,6 +457,31 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
       const parsed = JSON.parse(rawText);
       intent = parsed.intent || 'general';
       answerMarkdown = parsed.answerMarkdown || rawText;
+
+      if (Array.isArray(parsed.citations) && parsed.citations.length > 0) {
+        for (const c of parsed.citations) {
+          const matchedDoc = availableDocs.find(
+            (d) => d.id === c.docId || d.name.toLowerCase().includes((c.documentName || '').toLowerCase())
+          );
+          const effectiveDocId = matchedDoc?.id || c.docId || '';
+          citations.push({
+            docId: effectiveDocId,
+            documentName: matchedDoc?.name || c.documentName || 'OEM Manual',
+            pageNumber: c.pageNumber || null,
+            snippet: c.snippet || '',
+            fileUrl: effectiveDocId ? `/api/kb/file/${effectiveDocId}` : null,
+          });
+        }
+      }
+
+      // Honesty & Grounding Rule: If no uploaded manual was cited, prefix response with concise one-line guardrail
+      if (citations.length === 0 && (intent === 'diagnosis' || intent === 'general')) {
+        const guardrailPrefix = 'Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:';
+        if (!answerMarkdown.toLowerCase().includes('not found in your uploaded manuals')) {
+          answerMarkdown = `${guardrailPrefix}\n\n${answerMarkdown}`;
+        }
+      }
+
       if (intent === 'diagnosis' && parsed.diagnosis) {
         diagnosis = {
           alarmCode: parsed.diagnosis.alarmCode ?? null,
@@ -375,9 +493,11 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
       }
     } catch {
       answerMarkdown = response.text || '';
+      if (!answerMarkdown.toLowerCase().includes('not found in your uploaded manuals')) {
+        answerMarkdown = `Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:\n\n${answerMarkdown}`;
+      }
     }
 
-    const citations: any[] = [];
     const toolCalls: any[] = [];
     const latencyMs = Date.now() - startTime;
 
@@ -387,7 +507,7 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
       controller,
       language,
       toolNames: [],
-      citationCount: 0,
+      citationCount: citations.length,
       latencyMs,
       model: MODEL_FLASH,
     });
@@ -411,7 +531,7 @@ Never claim you checked manuals, registers, sensors or telemetry unless the retr
           text: answerMarkdown.slice(0, 20000),
           intent,
           diagnosis: diagnosis || null,
-          citations: null,
+          citations: citations.length > 0 ? citations : null,
           toolCalls: null,
           createdAt: new Date().toISOString(),
         });
@@ -464,16 +584,48 @@ agentRouter.post('/transcribe', requireAuth, rateLimitAI, audioUpload.single('au
     return;
   }
 
-  const rawMime = file.mimetype.split(';')[0].toLowerCase();
-  const ALLOWED_AUDIO_TYPES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/wav', 'audio/x-wav'];
-  if (!ALLOWED_AUDIO_TYPES.includes(rawMime)) {
-    res.status(400).json({ error: 'unsupported_audio', message: 'Only audio/webm, audio/ogg, audio/mp4, and audio/wav are allowed' });
+  const targetLanguage = (req.body?.language || user.preferredLanguage || 'en').trim();
+  const rawMime = (file.mimetype || '').split(';')[0].toLowerCase();
+  const ALLOWED_AUDIO_TYPES = [
+    'audio/webm',
+    'audio/ogg',
+    'audio/mp4',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/x-m4a',
+    'audio/m4a',
+    'audio/aac',
+    'audio/mpeg',
+    'application/octet-stream',
+  ];
+
+  if (rawMime && !ALLOWED_AUDIO_TYPES.includes(rawMime)) {
+    res.status(400).json({
+      error: 'unsupported_audio',
+      message: 'Supported audio formats: WEBM, WAV, MP4, AAC, OGG up to 10 MB.',
+    });
     return;
   }
 
   try {
     const ai = getGemini();
-    const effectiveMime = rawMime === 'audio/x-wav' ? 'audio/wav' : rawMime;
+    const effectiveMime =
+      rawMime === 'audio/x-wav'
+        ? 'audio/wav'
+        : rawMime === 'audio/x-m4a' || rawMime === 'audio/m4a' || rawMime === 'audio/aac'
+        ? 'audio/mp4'
+        : rawMime === 'application/octet-stream' || !rawMime
+        ? 'audio/webm'
+        : rawMime;
+
+    const langNames: Record<string, string> = {
+      en: 'English',
+      hi: 'Hindi',
+      ml: 'Malayalam',
+      ta: 'Tamil',
+    };
+    const targetLangName = langNames[targetLanguage] || targetLanguage;
+
     const response = await executeWithRetry(async () => {
       return await ai.models.generateContent({
         model: MODEL_FLASH,
@@ -488,13 +640,13 @@ agentRouter.post('/transcribe', requireAuth, rateLimitAI, audioUpload.single('au
                 },
               },
               {
-                text: "Transcribe this operator's spoken question exactly, in its original language and script. Return only the transcript.",
+                text: `Transcribe this operator's spoken CNC question accurately in ${targetLangName} (${targetLanguage}). Transcribe directly in the original script of this language without translating. Return ONLY the plain transcription text.`,
               },
             ],
           },
         ],
       });
-    }, user.preferredLanguage || 'en');
+    }, targetLanguage);
 
     const transcript = (response.text || '').trim();
     const latencyMs = Date.now() - startTime;
@@ -502,7 +654,7 @@ agentRouter.post('/transcribe', requireAuth, rateLimitAI, audioUpload.single('au
     logAIRequest({
       route: '/api/agent/transcribe',
       uid: user.uid,
-      language: user.preferredLanguage || 'en',
+      language: targetLanguage,
       model: MODEL_FLASH,
       latencyMs,
     });
@@ -512,7 +664,7 @@ agentRouter.post('/transcribe', requireAuth, rateLimitAI, audioUpload.single('au
     console.error(JSON.stringify({ route: 'POST /api/agent/transcribe', error: error?.message || String(error) }));
     res.status(503).json({
       error: 'transcribe_failed',
-      message: getFriendlyErrorMessage(user.preferredLanguage || 'en'),
+      message: getFriendlyErrorMessage(targetLanguage),
     });
   }
 });

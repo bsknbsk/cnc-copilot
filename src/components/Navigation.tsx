@@ -8,16 +8,8 @@ interface NavigationProps {
 
 export function Navigation({ currentTab, onSelectTab }: NavigationProps) {
   const { user, profile, isAdmin, login, logout, updatePreferences } = useAuth();
-  const [langMenuOpen, setLangMenuOpen] = useState(false);
   const [controllerMenuOpen, setControllerMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-
-  const languages = [
-    { code: 'en', label: 'English', short: 'EN' },
-    { code: 'hi', label: 'हिन्दी (Hindi)', short: 'HI' },
-    { code: 'ml', label: 'മലയാളം (Malayalam)', short: 'ML' },
-    { code: 'ta', label: 'தமிழ் (Tamil)', short: 'TA' },
-  ];
 
   const controllers = [
     { code: 'fanuc', label: 'Fanuc 0i-MF', short: 'Fanuc' },
@@ -25,13 +17,7 @@ export function Navigation({ currentTab, onSelectTab }: NavigationProps) {
     { code: 'generic', label: 'Generic ISO G-Code', short: 'Generic' },
   ];
 
-  const currentLang = languages.find((l) => l.code === (profile?.preferredLanguage || 'en')) || languages[0];
   const currentController = controllers.find((c) => c.code === (profile?.preferredController || 'fanuc')) || controllers[0];
-
-  const handleLangSelect = (code: string) => {
-    updatePreferences({ preferredLanguage: code as any });
-    setLangMenuOpen(false);
-  };
 
   const handleControllerSelect = (code: string) => {
     updatePreferences({ preferredController: code as any });
@@ -161,7 +147,7 @@ export function Navigation({ currentTab, onSelectTab }: NavigationProps) {
                 className="hidden md:flex items-center gap-space-xs px-space-sm py-1.5 rounded bg-surface-container text-tertiary hover:bg-surface-container-high hover:text-on-surface cursor-pointer transition-colors border border-outline-variant/40"
               >
                 <span className="font-code-sm text-code-sm text-on-surface font-mono">
-                  {currentController.short} / {currentLang.short}
+                  {currentController.short}
                 </span>
                 <span className="material-symbols-outlined text-[16px] text-tertiary">unfold_more</span>
               </button>
@@ -190,50 +176,6 @@ export function Navigation({ currentTab, onSelectTab }: NavigationProps) {
                 </div>
               )}
             </div>
-
-            {/* Language Selector Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setLangMenuOpen(!langMenuOpen)}
-                aria-label="Select Language"
-                className="p-space-sm rounded bg-surface-container text-tertiary hover:bg-surface-container-high hover:text-on-surface transition-colors flex items-center justify-center border border-outline-variant/40"
-              >
-                <span className="material-symbols-outlined text-[20px]">language</span>
-              </button>
-
-              {langMenuOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-xl bg-surface-container border border-outline-variant shadow-xl py-1 z-50">
-                  <div className="px-3 py-1.5 border-b border-surface-container-high text-[10px] font-mono uppercase text-tertiary tracking-wider">
-                    Language
-                  </div>
-                  {languages.map((l) => (
-                    <button
-                      key={l.code}
-                      onClick={() => handleLangSelect(l.code)}
-                      className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between hover:bg-surface-container-high transition-colors ${
-                        (profile?.preferredLanguage || 'en') === l.code
-                          ? 'text-primary-container font-bold bg-primary-container/10'
-                          : 'text-on-surface'
-                      }`}
-                    >
-                      <span>{l.label}</span>
-                      {(profile?.preferredLanguage || 'en') === l.code && (
-                        <span className="material-symbols-outlined text-[14px]">check</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Notifications Alert Icon */}
-            <button
-              aria-label="Notifications"
-              className="p-space-sm rounded bg-surface-container text-tertiary hover:bg-surface-container-high hover:text-on-surface transition-colors flex items-center justify-center border border-outline-variant/40"
-              type="button"
-            >
-              <span className="material-symbols-outlined text-[20px]">notifications</span>
-            </button>
 
             {/* User Avatar Menu or Sign In CTA */}
             {user ? (

@@ -252,3 +252,58 @@ kbRouter.delete('/:docId', requireAuth, requireAdmin, async (req: Request, res: 
 
   res.json({ success: true, docId });
 });
+
+// View / Download manual file in new tab
+kbRouter.get('/file/:identifier', async (req: Request, res: Response) => {
+  const { identifier } = req.params;
+  if (!identifier) {
+    res.status(400).send('Document identifier required');
+    return;
+  }
+
+  try {
+    let docData: any = null;
+    let docSnap = await adminDb.collection('kb_docs').doc(identifier).get();
+    if (docSnap.exists) {
+      docData = docSnap.data();
+    } else {
+      const byName = await adminDb.collection('kb_docs').where('name', '==', identifier).limit(1).get();
+      if (!byName.empty) {
+        docData = byName.docs[0].data();
+      } else {
+        const byFilename = await adminDb.collection('kb_docs').where('filename', '==', identifier).limit(1).get();
+        if (!byFilename.empty) {
+          docData = byFilename.docs[0].data();
+        }
+      }
+    }
+
+    if (!docData) {
+      res.status(404).send('Document not found in knowledge base');
+      return;
+    }
+
+    if (!docData.storagePath) {
+      res.status(404).send('File storage path not found for this document');
+      return;
+    }
+
+    const bucket = adminStorage.bucket();
+    const file = bucket.file(docData.storagePath);
+    const [exists] = await file.exists();
+    if (!exists) {
+      res.status(404).send('Document file not found in storage bucket');
+      return;
+    }
+
+    const mime = docData.mimeType || 'application/pdf';
+    const filename = docData.filename || `${docData.name || 'manual'}.pdf`;
+
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    file.createReadStream().pipe(res);
+  } catch (err: any) {
+    console.error(JSON.stringify({ level: 'error', route: 'GET /api/kb/file/:identifier', error: err?.message || String(err) }));
+    res.status(500).send('Failed to retrieve document file');
+  }
+});

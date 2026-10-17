@@ -109,6 +109,34 @@ This document records the approved design exceptions and UI updates applied to t
 
 3. **Enlarged 3D Viewport and Vertical Metric Sequence**
    - **Change:** Expanded the 3D simulation widget to `min-h-[520px]` and 8-column right panel span. Reordered and stacked the 4 primary metrics vertically into sequence: (1) Spindle Speed, (2) Feed Rate, (3) Spindle Torque, and (4) Material Removal Rate alongside the 3D viewport.
-   - **Rationale:** Provides significantly greater visual canvas area for tool contact and chip geometry inspection while creating a clean, vertically balanced metrics column.
+## Approved UI Changes: Shopfloor Agent Controls, Citations, and Header/Footer Cleanup
+
+1. **Header and Footer Cleanup (Approved Locked File Exceptions)**
+   - **Change in `src/components/Navigation.tsx`:** Removed notification bell symbol button, removed header language dropdown selector, and removed `/ {currentLang.short}` controller indicator.
+   - **Change in `src/components/ui/AppShell.tsx`:** Removed `<span>CNC COPILOT INDUSTRIAL TELEMETRY</span>` from the footer bar.
+   - **Rationale:** Direct user request to declutter navigation and eliminate redundant telemetry labels and header controls.
+
+2. **Composer Language Preference Selector**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Added a language selector button adjacent to the attachment paperclip button in the chat composer bar, offering quick selection between English, Hindi, Malayalam, and Tamil. Wired to both Speech-to-Text transcription and Text-to-Speech audio playback.
+   - **Rationale:** Empowers shopfloor operators to choose their preferred working language directly inside the conversational workspace.
+
+3. **History Management and 3-Dot Action Menu**
+   - **Change in `src/components/ShopfloorAgent.tsx`:**
+     - Added controller filter chips (`All`, `Fanuc`, `Mitsu`, `Generic`) to organize past chats by machine controller type.
+     - Added a 3-dot dropdown context menu (`...`) on every chat item in the history list offering "Pin Chat", "Export Chat", and "Delete Chat".
+     - Implemented pinned chat sorting to the top of the history list with Firestore persistence.
+     - Implemented industrial Markdown export of diagnostic logs with timestamps, alarms, steps, and verified citations.
+     - Implemented hard deletion with an explicit confirmation pop-up modal dialog and recursive subcollection cleanup.
+     - Added blank session protection to prevent creating redundant empty sessions.
+   - **Rationale:** Streamlines diagnostic history workflows and provides clean session lifecycle management.
+
+4. **Microphone Voice Interaction**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Updated the mic button with press-and-hold support (hold to talk > 350ms, release to transcribe and auto-submit) alongside click-to-toggle, with real-time recording feedback and broad audio format support.
+   - **Rationale:** Provides intuitive voice interaction suited for noisy machine shop environments.
+
+5. **Verified Document Citations with Direct Tab Previews**
+   - **Change in `src/components/ShopfloorAgent.tsx` and `server/routes/kb.ts`:** Citations rendered in chat bubbles and diagnostic cards link directly to `/api/kb/file/:identifier` opening PDF documentation in a new browser tab. When no manual data is retrieved, answers include a clear, concise one-line guardrail: `"Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:"`.
+   - **Rationale:** Strictly enforces honesty rules and provides instant grounding verification against uploaded manuals.
+
 
 
