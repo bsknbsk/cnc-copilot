@@ -334,16 +334,69 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
           </div>
 
           <div
-            className={`relative rounded-xl overflow-hidden h-[650px] transition-transform duration-75 ${
+            className={`relative rounded-xl overflow-hidden h-[650px] transition-transform duration-75 bg-surface-container-lowest/90 border border-outline-variant/30 ${
               cameraShake ? 'translate-x-1' : ''
             }`}
           >
+            {/* Viewport Background Grid */}
+            <div className="absolute inset-0 pointer-events-none z-0">
+              <svg className="w-full h-full opacity-30" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <pattern height="32" id="academyGrid" patternUnits="userSpaceOnUse" width="32">
+                    <path className="text-secondary" d="M 32 0 L 0 0 0 32" fill="none" stroke="currentColor" strokeWidth="0.7"></path>
+                  </pattern>
+                </defs>
+                <rect fill="url(#academyGrid)" height="100%" width="100%"></rect>
+              </svg>
+            </div>
+
+            {/* Viewport Top Bar */}
+            <div className="absolute top-2 left-3 right-3 z-10 flex items-center justify-between bg-surface-container/85 backdrop-blur-md px-space-sm py-1.5 rounded-lg shadow-sm border border-outline-variant/30">
+              <div className="flex items-center gap-space-sm min-w-0">
+                <span className={`w-2 h-2 rounded-full ${collision ? 'bg-error animate-ping' : isPlaying ? 'bg-secondary animate-ping' : 'bg-secondary'} flex-shrink-0`}></span>
+                <span className="font-headline-sm text-sm font-bold text-on-surface truncate">
+                  Simulation: Tool Contact & Chip Geometry
+                </span>
+              </div>
+              <div className="flex items-center gap-space-md">
+                {/* XYZ Axis Triad Readout */}
+                <div className="flex items-center gap-space-xs font-mono font-label-sm text-xs">
+                  <span className="px-1.5 py-0.5 rounded bg-error/20 text-error font-bold">X</span>
+                  <span className="px-1.5 py-0.5 rounded bg-secondary/20 text-secondary font-bold">Y</span>
+                  <span className="px-1.5 py-0.5 rounded bg-primary-container/20 text-primary-container font-bold">Z</span>
+                </div>
+                {/* Status Badge */}
+                <div className={`hidden sm:flex items-center gap-1 px-space-xs py-0.5 rounded font-label-sm text-[11px] font-mono font-semibold ${
+                  collision ? 'bg-error/20 text-error' : 'bg-secondary/15 text-secondary'
+                }`}>
+                  <span className="material-symbols-outlined text-[14px]">
+                    {collision ? 'warning' : 'verified'}
+                  </span>
+                  <span>
+                    {collision
+                      ? 'COLLISION DEFLECTION'
+                      : isPassed
+                      ? 'MISSION COMPLETE • STABLE'
+                      : isPlaying
+                      ? 'ACTIVE CUT • STABLE'
+                      : 'STABLE CUT • NO CHATTER'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Force / RPM Readout */}
+            <div className="absolute left-4 top-14 z-10 pointer-events-none font-mono text-[11px] text-secondary bg-surface-container-lowest/80 px-2 py-0.5 rounded border border-outline-variant/30">
+              <span>Ft: {collision ? '0N' : currentModal.spindleOn ? '1128N' : '0N'}</span>
+              <span className="text-tertiary-container ml-2">RPM: {currentModal.spindleOn ? (currentModal.rpm || 5093) : 0}</span>
+            </div>
+
             <Viewport3D
               cameraPosition={[120, 100, 120]}
               showGrid={false}
-              className="bg-zinc-200"
+              className="bg-transparent"
               overlay={
-                <div className="absolute bottom-4 left-4 right-4 flex flex-col gap-3 pointer-events-none">
+                <div className="absolute bottom-14 left-4 right-4 flex flex-col gap-3 pointer-events-none">
                   {/* Damage Assessment Card */}
                   {collision && (
                     <Card className="p-4 bg-error-container/10 border-error/40 backdrop-blur-md shadow-2xl animate-slide-in-right pointer-events-auto">
@@ -452,6 +505,60 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
                 }
               />
             </Viewport3D>
+
+            {/* Viewport Bottom Overlay Bar: Controls & Scrubber */}
+            <div className="absolute bottom-2 left-3 right-3 z-10 flex items-center justify-between bg-surface-container/85 backdrop-blur-md px-space-md py-space-xs rounded-lg shadow-sm border border-outline-variant/30">
+              <div className="flex items-center gap-space-sm">
+                <button
+                  onClick={() => {
+                    if (isPlaying) {
+                      setIsPlaying(false);
+                    } else {
+                      handleRunSimulation();
+                    }
+                  }}
+                  aria-label={isPlaying ? 'Pause Simulation' : 'Play Simulation'}
+                  className="w-8 h-8 rounded bg-surface-container-high hover:bg-surface-bright flex items-center justify-center text-on-surface cursor-pointer"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    {isPlaying ? 'pause' : 'play_arrow'}
+                  </span>
+                </button>
+                <button
+                  onClick={handleReset}
+                  aria-label="Reset View"
+                  className="w-8 h-8 rounded bg-surface-container-high hover:bg-surface-bright flex items-center justify-center text-tertiary hover:text-on-surface cursor-pointer"
+                  type="button"
+                >
+                  <span className="material-symbols-outlined text-[18px]">replay</span>
+                </button>
+                <span className="font-label-sm text-xs font-mono text-tertiary ml-space-xs hidden sm:inline">
+                  Vf: {currentModal.feed || 1630} mm/min
+                </span>
+              </div>
+
+              {/* Timeline Scrubber */}
+              <div className="flex-1 max-w-xs mx-space-md h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-secondary rounded-full"
+                  style={{
+                    width: `${parseResult.segments.length > 0 ? Math.min(100, Math.round(((playbackIndex + 1) / parseResult.segments.length) * 100)) : 0}%`,
+                  }}
+                ></div>
+              </div>
+
+              <div className="flex items-center gap-space-xs">
+                <span className="font-label-sm text-[10px] font-mono text-tertiary">SPEED</span>
+                <button
+                  onClick={() => setPlaybackSpeed((prev) => (prev === 1 ? 2 : prev === 2 ? 0.5 : 1))}
+                  className="px-1.5 py-0.5 rounded bg-surface-container text-secondary font-label-sm text-xs font-mono font-bold cursor-pointer"
+                  type="button"
+                >
+                  {playbackSpeed}x
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Simulation Controls */}

@@ -16,11 +16,53 @@ import { Badge } from '../ui/Badge.js';
 import { ButtonPrimary, ButtonSecondary } from '../ui/Button.js';
 import { Tabs, Skeleton, ProgressBar, Drawer } from '../ui/Feedback.js';
 
+export type ToolAssemblyType = 'endmill' | 'facemill' | 'drill' | 'tap';
+
+export interface ToolAssemblyOption {
+  id: ToolAssemblyType;
+  name: string;
+  category: string;
+  process: ProcessType;
+  description: string;
+}
+
+export const TOOL_ASSEMBLY_OPTIONS: ToolAssemblyOption[] = [
+  {
+    id: 'endmill',
+    name: 'End Mill',
+    category: 'Milling',
+    process: 'milling',
+    description: 'Helical solid carbide/HSS mill for side contouring, slotting, and pocketing',
+  },
+  {
+    id: 'facemill',
+    name: 'Face Mill',
+    category: 'Milling',
+    process: 'milling',
+    description: 'Indexable multi-insert cutter for large planar surface facing and high MRR',
+  },
+  {
+    id: 'drill',
+    name: 'Drill',
+    category: 'Drilling',
+    process: 'drilling',
+    description: 'High-penetration 2-flute twist drill for axial hole drilling operations',
+  },
+  {
+    id: 'tap',
+    name: 'Tap',
+    category: 'Tapping',
+    process: 'tapping',
+    description: 'Precision spiral point or spiral flute tap for standardized metric thread cutting',
+  },
+];
+
 export function CuttingCalculator() {
   const { user, profile } = useAuth();
 
   // Process mode
   const [process, setProcess] = useState<ProcessType>('milling');
+  const [toolAssembly, setToolAssembly] = useState<ToolAssemblyType>('endmill');
   const [isMetric, setIsMetric] = useState(true);
 
   // Material selection
@@ -162,9 +204,19 @@ export function CuttingCalculator() {
                 activeTab={process}
                 onTabChange={(id) => {
                   setProcess(id as ProcessType);
-                  if (id === 'milling') setFeed(0.08);
-                  if (id === 'drilling') setFeed(0.12);
-                  if (id === 'tapping') { setPitch(1.5); setDiameter(10.0); }
+                  if (id === 'milling') {
+                    if (toolAssembly !== 'endmill' && toolAssembly !== 'facemill') setToolAssembly('endmill');
+                    setFeed(0.08);
+                  }
+                  if (id === 'drilling') {
+                    setToolAssembly('drill');
+                    setFeed(0.12);
+                  }
+                  if (id === 'tapping') {
+                    setToolAssembly('tap');
+                    setPitch(1.5);
+                    setDiameter(10.0);
+                  }
                   if (id === 'boring') setFeed(0.12);
                 }}
                 tabs={[
@@ -317,20 +369,93 @@ export function CuttingCalculator() {
                 <div className="flex flex-col min-w-0">
                   <div className="flex items-center gap-space-xs">
                     <span className="font-body-md text-body-md font-semibold text-on-surface truncate">
-                      {toolMaterial === 'carbide' ? 'Solid Carbide End Mill' : 'High Speed Steel (HSS)'}
+                      {toolAssembly === 'endmill'
+                        ? `${toolMaterial === 'carbide' ? 'Solid Carbide' : 'HSS'} End Mill`
+                        : toolAssembly === 'facemill'
+                        ? `${toolMaterial === 'carbide' ? 'Indexable' : 'HSS'} Face Mill`
+                        : toolAssembly === 'drill'
+                        ? `${toolMaterial === 'carbide' ? 'Solid Carbide' : 'HSS'} Drill`
+                        : `${toolMaterial === 'carbide' ? 'Spiral Point' : 'HSS'} Tap`}
                     </span>
                     <span className="px-space-xs py-0.5 rounded bg-primary-container/20 text-primary-container font-label-sm text-label-sm font-mono font-bold">
-                      Ø{diameter.toFixed(1)}
+                      {toolAssembly === 'tap' ? `M${diameter.toFixed(1)}` : `Ø${diameter.toFixed(1)}`}
                     </span>
                   </div>
                   <span className="font-label-sm text-label-sm text-tertiary-container font-mono">
-                    {process === 'milling' ? `${flutes}-Flute Helix • ap: ${ap}mm` : `Single Point • Nose: 0.8mm`}
+                    {toolAssembly === 'endmill'
+                      ? `${flutes}-Flute Helix • ap: ${ap}mm`
+                      : toolAssembly === 'facemill'
+                      ? `${flutes}-Insert Face • ae: ${ae}mm • ap: ${ap}mm`
+                      : toolAssembly === 'drill'
+                      ? `2-Flute Twist • depth: ${holeDepth}mm`
+                      : `ISO Thread • Pitch: ${pitch}mm`}
                   </span>
                 </div>
                 <span className="material-symbols-outlined text-tertiary group-hover:text-secondary transition-colors text-[20px]">
-                  expand_more
+                  {toolAssemblyOpen ? 'expand_less' : 'expand_more'}
                 </span>
               </div>
+
+              {/* Tool Assembly Dropdown Overlay */}
+              {toolAssemblyOpen && (
+                <div className="absolute top-full left-0 right-0 mt-1 rounded-xl bg-surface-container-high border border-outline-variant shadow-2xl p-2 z-50">
+                  <div className="px-2 py-1 text-[10px] font-mono uppercase text-tertiary border-b border-surface-container-highest mb-1">
+                    Select Active Tool Assembly
+                  </div>
+                  {TOOL_ASSEMBLY_OPTIONS.map((tool) => (
+                    <button
+                      key={tool.id}
+                      onClick={() => {
+                        setToolAssembly(tool.id);
+                        setProcess(tool.process);
+                        if (tool.id === 'endmill') {
+                          setDiameter((prev) => (prev > 25 ? 10.0 : prev || 10.0));
+                          setFlutes(4);
+                          setAp(15.0);
+                          setAe(4.0);
+                          setFeed(0.08);
+                        } else if (tool.id === 'facemill') {
+                          setDiameter((prev) => (prev < 32 ? 50.0 : prev));
+                          setFlutes(5);
+                          setAp(2.5);
+                          setAe(35.0);
+                          setFeed(0.12);
+                        } else if (tool.id === 'drill') {
+                          setDiameter((prev) => (prev > 30 ? 8.5 : prev || 8.5));
+                          setFlutes(2);
+                          setHoleDepth(30.0);
+                          setFeed(0.15);
+                        } else if (tool.id === 'tap') {
+                          setDiameter(10.0);
+                          setPitch(1.5);
+                          setHoleDepth(25.0);
+                          setFeed(1.5);
+                        }
+                        setToolAssemblyOpen(false);
+                      }}
+                      className={`w-full text-left p-2.5 rounded-lg flex items-center justify-between hover:bg-surface-container transition-colors ${
+                        toolAssembly === tool.id ? 'bg-primary-container/15 text-primary' : 'text-on-surface'
+                      }`}
+                      type="button"
+                    >
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                          <span className="font-headline-sm text-xs font-bold">{tool.name}</span>
+                          <span className="px-1.5 py-0.5 rounded bg-surface-container-highest text-secondary font-mono text-[10px]">
+                            {tool.category}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[10px] text-tertiary mt-0.5">
+                          {tool.description}
+                        </span>
+                      </div>
+                      {toolAssembly === tool.id && (
+                        <span className="material-symbols-outlined text-primary text-[18px]">check</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Tool Geometry Stepper Grid (Dc diameter & Flutes/Pitch) */}

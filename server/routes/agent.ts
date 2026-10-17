@@ -477,12 +477,13 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
             (d) => d.id === c.docId || d.name.toLowerCase().includes((c.documentName || '').toLowerCase())
           );
           const effectiveDocId = matchedDoc?.id || c.docId || '';
+          const pageAnchor = c.pageNumber ? `#page=${c.pageNumber}` : '';
           citations.push({
             docId: effectiveDocId,
             documentName: matchedDoc?.name || c.documentName || 'OEM Manual',
             pageNumber: c.pageNumber || null,
             snippet: c.snippet || '',
-            fileUrl: effectiveDocId ? `/api/kb/file/${effectiveDocId}` : null,
+            fileUrl: effectiveDocId ? `/api/kb/file/${effectiveDocId}${pageAnchor}` : null,
           });
         }
       }

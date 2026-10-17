@@ -1360,20 +1360,26 @@ export function ShopfloorAgent({
                               {msg.citations && msg.citations.length > 0 && (
                                 <div className="pt-2 flex flex-wrap items-center gap-2">
                                   <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
-                                  {msg.citations.map((c, i) => (
-                                    <a
-                                      key={i}
-                                      href={c.fileUrl || `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
-                                      title="Open manual file in new tab"
-                                    >
-                                      <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                      <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
-                                      <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
-                                    </a>
-                                  ))}
+                                  {msg.citations.map((c, i) => {
+                                    const pageAnchor = c.pageNumber ? `#page=${c.pageNumber}` : '';
+                                    const citationHref = c.fileUrl
+                                      ? (c.fileUrl.includes('#page=') ? c.fileUrl : `${c.fileUrl}${pageAnchor}`)
+                                      : `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}${pageAnchor}`;
+                                    return (
+                                      <a
+                                        key={i}
+                                        href={citationHref}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
+                                        title={c.pageNumber ? `Open manual at page ${c.pageNumber} in new tab` : 'Open manual file in new tab'}
+                                      >
+                                        <span className="material-symbols-outlined text-[14px]">menu_book</span>
+                                        <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
+                                        <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
+                                      </a>
+                                    );
+                                  })}
                                 </div>
                               )}
 
@@ -1476,20 +1482,26 @@ export function ShopfloorAgent({
                             {msg.citations && msg.citations.length > 0 && (
                               <div className="pt-2 flex flex-wrap items-center gap-2">
                                 <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
-                                {msg.citations.map((c, i) => (
-                                  <a
-                                    key={i}
-                                    href={c.fileUrl || `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
-                                    title="Open manual file in new tab"
-                                  >
-                                    <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                    <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
-                                    <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
-                                  </a>
-                                ))}
+                                {msg.citations.map((c, i) => {
+                                  const pageAnchor = c.pageNumber ? `#page=${c.pageNumber}` : '';
+                                  const citationHref = c.fileUrl
+                                    ? (c.fileUrl.includes('#page=') ? c.fileUrl : `${c.fileUrl}${pageAnchor}`)
+                                    : `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}${pageAnchor}`;
+                                  return (
+                                    <a
+                                      key={i}
+                                      href={citationHref}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
+                                      title={c.pageNumber ? `Open manual at page ${c.pageNumber} in new tab` : 'Open manual file in new tab'}
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">menu_book</span>
+                                      <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
+                                      <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
+                                    </a>
+                                  );
+                                })}
                               </div>
                             )}
 

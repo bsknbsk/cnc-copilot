@@ -181,3 +181,18 @@ This document records the approved design exceptions and UI updates applied to t
 4. **Removal of Chunk Inspector Widget from Knowledge Base**
    - **Change in `src/components/KnowledgeBase.tsx`:** Removed the Inspect Chunks visibility button in document table rows and the Chunk Inspector Drawer component.
    - **Rationale:** Operators access full documents and verified citations directly; granular vector chunk inspection is no longer needed on the shopfloor document view.
+
+## Approved UI Changes: Active Tool Assembly Dropdown, Academy Simulation Match, and Citation Page Navigation
+
+1. **Active Tool Assembly Dropdown and Geometry Selection**
+   - **Change in `src/components/calculator/CuttingCalculator.tsx`:** Added interactive selection menu for "End Mill", "Face Mill", "Drill", and "Tap" to the Active Tool Assembly card. Selection automatically sets tool geometry, flutes, cut depth/width, and synchronizes with process tabs and physics calculations.
+   - **Rationale:** Allows machinists to configure tooling assemblies directly from the primary tool assembly control.
+
+2. **Academy 3D Simulation Match with Tool Contact and Chip Geometry**
+   - **Change in `src/components/academy/MachineScene.tsx` and `src/components/academy/MissionView.tsx`:** Updated Academy 3D simulation to match the Machining Calculator visual design: conical CAT40 style tool holder with orange collar, teal carbide cutter with orange flutes, real-time chip ejection sparks, dark metallic stock block, dark fixture vise, SVG grid background, top header with XYZ triad and stable cut status badge, and timeline scrubber overlay.
+   - **Rationale:** Unifies the high-contrast CNC industrial 3D simulation aesthetic across the training Academy and physics calculation modules.
+
+3. **Shopfloor Agent Direct Citation Page Number Navigation**
+   - **Change in `src/components/ShopfloorAgent.tsx` and `server/routes/agent.ts`:** Attached `#page={pageNumber}` fragment to manual citation links so clicking a verified citation opens the PDF directly on the cited page number.
+   - **Rationale:** Ensures operators immediately access relevant manual sections without manual scrolling.
+
