@@ -82,3 +82,18 @@ This document records the approved design exceptions and UI updates applied to t
 6. **Server-Authoritative Evaluation and Audio Input**
    - **Change:** Server evaluates G-code run programs via `POST /api/academy/event`, computing collisions, XP, streaks, levels, and badges. Wired the microphone button in `InstructorPanel.tsx` to browser speech recognition for natural voice queries.
    - **Rationale:** Ensures tamper-proof progression and convenient multimodal assistance in noisy shop environments.
+
+## Approved UI Changes: Cutting Calculator 3D Simulation
+
+1. **High-Contrast Flute and Insert Geometry**
+   - **Change:** Added 4 helical cutting flutes with alternating dark tungsten and orange protective coatings, gold TiN carbide inserts at the cutting edge, and dual drive keys on the spindle arbor in `src/components/calculator/Calculator3DView.tsx`.
+   - **Rationale:** Solves the optical illusion where a featureless monochromatic cylinder spinning about its axis of symmetry appeared completely static to operators.
+
+2. **Process-Specific Tool Kinematics and Chip Ejection**
+   - **Change:** Added dynamic tool translation along the cut path according to feed rate and operation type (X-axis sweep for milling, plunge and retract cycle for drilling/tapping/boring, radial/axial feed for turning) and reactive chip ejection sparks.
+   - **Rationale:** Visually demonstrates actual machining engagement, contact, and chip clearance in real time.
+
+3. **Dynamic Scrubber and Playback Integration**
+   - **Change:** Wired the timeline scrubber track to the real cut cycle progress, and connected play/pause, replay (cycle reset), and speed multipliers (0.5x, 1x, 1.5x) to both spindle rotation and feed rate.
+   - **Rationale:** Replaced static 65% mock progress indicator with a functional timeline tracking the simulated cut.
+
