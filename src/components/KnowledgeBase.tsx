@@ -3,7 +3,6 @@ import { useAuth } from '../context/AuthContext.js';
 import { collection, onSnapshot, query, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { db, apiFetch } from '../lib/firebase.js';
 import { 
-  PageHeader, 
   SectionHeader, 
   StatChip, 
   EmptyState 
@@ -22,11 +21,21 @@ export interface ChunkItem {
   snippet: string;
 }
 
+export type KBDocType =
+  | 'OEM Manual'
+  | 'Service Manual'
+  | 'Shop Standard (SOP)'
+  | 'Tooling Catalog'
+  | 'Param & Macro Sheet'
+  | 'Shop Standard'
+  | 'Catalog'
+  | 'Param Sheet';
+
 export interface KBDocument {
   id: string;
   name: string;
   controller: string;
-  docType: 'OEM Manual' | 'Service Manual' | 'Shop Standard' | 'Catalog' | 'Param Sheet';
+  docType: KBDocType;
   refCode: string;
   pages: number;
   status: 'Ready' | 'Indexing' | 'Processing' | 'Error' | 'Failed';
@@ -35,6 +44,8 @@ export interface KBDocument {
   vectorCount?: number;
   chunks?: ChunkItem[];
   fileUrl?: string;
+  filename?: string;
+  storagePath?: string;
   isPinned?: boolean;
 }
 
@@ -59,9 +70,9 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const [uploadState, setUploadState] = useState({
     name: '',
     controller: 'Fanuc',
-    docType: 'OEM Manual' as KBDocument['docType'],
+    docType: 'OEM Manual' as KBDocType,
     refCode: '',
-    pages: 50,
+    pages: 1,
   });
   const [isUploading, setIsUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -121,11 +132,11 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
 
         const matchesType =
           docTypeFilter === 'all' ||
-          (docTypeFilter === 'oem' && docItem.docType === 'OEM Manual') ||
-          (docTypeFilter === 'service' && docItem.docType === 'Service Manual') ||
-          (docTypeFilter === 'standards' && docItem.docType === 'Shop Standard') ||
-          (docTypeFilter === 'tooling' && docItem.docType === 'Catalog') ||
-          (docTypeFilter === 'params' && docItem.docType === 'Param Sheet');
+          (docTypeFilter === 'OEM Manual' && docItem.docType === 'OEM Manual') ||
+          (docTypeFilter === 'Service Manual' && docItem.docType === 'Service Manual') ||
+          (docTypeFilter === 'Shop Standard (SOP)' && (docItem.docType === 'Shop Standard (SOP)' || docItem.docType === 'Shop Standard')) ||
+          (docTypeFilter === 'Tooling Catalog' && (docItem.docType === 'Tooling Catalog' || docItem.docType === 'Catalog')) ||
+          (docTypeFilter === 'Param & Macro Sheet' && (docItem.docType === 'Param & Macro Sheet' || docItem.docType === 'Param Sheet'));
 
         return matchesSearch && matchesController && matchesType;
       })
@@ -186,7 +197,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
         controller: 'Fanuc',
         docType: 'OEM Manual',
         refCode: '',
-        pages: 50,
+        pages: 1,
       });
     } catch (err: any) {
       alert(`Upload error: ${err.message || 'Could not upload document'}`);
@@ -217,17 +228,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
     }
   };
 
-  // Export Manifest
-  const handleExportManifest = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(documents, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `cnc-copilot-kb-manifest-${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-  };
-
   return (
     <>
       <div className="w-full bg-surface-container-lowest min-h-screen text-on-surface antialiased font-body-md">
@@ -256,19 +256,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
             </Card>
           </div>
 
-          {/* Page Title & Section Header */}
-          <section className="mb-space-lg">
-            <PageHeader
-              label="Physics RAG Engine"
-              title="Knowledge Base & Shopfloor Memory"
-              caption="Controller manuals, tooling catalog cut-sheets, and verified shop machining standards indexed for real-time retrieval."
-              actions={
-                <ButtonPrimary onClick={() => setUploadModalOpen(true)} icon="upload_file">
-                  Upload Manual
-                </ButtonPrimary>
-              }
-            />
-          </section>
           <div className="grid grid-cols-1 gap-space-lg items-start">
             {/* Explorer & Table (full width) */}
             <div className="flex flex-col gap-space-md">
@@ -312,10 +299,12 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                     }}
                     className="bg-surface-container-high text-on-surface font-label-md text-label-md h-11 px-4 rounded-lg outline-none cursor-pointer"
                   >
-                    <option value="all">All Types</option>
-                    <option value="oem">OEM Manuals</option>
-                    <option value="service">Service</option>
-                    <option value="standards">Standards</option>
+                    <option value="all">All Categories</option>
+                    <option value="OEM Manual">OEM Manual</option>
+                    <option value="Service Manual">Service Manual</option>
+                    <option value="Shop Standard (SOP)">Shop Standard (SOP)</option>
+                    <option value="Tooling Catalog">Tooling Catalog</option>
+                    <option value="Param & Macro Sheet">Param & Macro Sheet</option>
                   </select>
                 </div>
 
@@ -348,7 +337,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               </div>
 
               {/* Indexing Status Notice */}
-              {indexingDocs.length > 0 ? (
+              {indexingDocs.length > 0 && (
                 <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm border border-primary-container/30">
                   <span className="material-symbols-outlined text-primary-container text-[24px]">sync_problem</span>
                   <div className="flex flex-col">
@@ -360,18 +349,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                     </span>
                   </div>
                 </div>
-              ) : (
-                <div className="bg-surface-container p-space-md rounded-xl shadow-sm flex items-center gap-space-sm">
-                  <span className="material-symbols-outlined text-secondary text-[24px]">verified</span>
-                  <div className="flex flex-col">
-                    <span className="font-headline-sm text-headline-sm text-on-surface font-semibold">
-                      All Corpora Synchronized
-                    </span>
-                    <span className="font-body-sm text-body-sm text-tertiary">
-                      Gemini File Search index up to date with active shop standards.
-                    </span>
-                  </div>
-                </div>
               )}
 
               {/* Documents Inventory Table */}
@@ -380,7 +357,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                   title="Verified Memory Corpus" 
                   actions={
                     <div className="flex items-center gap-space-xs">
-                      <ButtonSecondary onClick={handleExportManifest} icon="download">Export</ButtonSecondary>
                       <Badge variant="secondary">{readyDocs} ACTIVE</Badge>
                     </div>
                   }
@@ -428,17 +404,19 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                                       ? 'text-secondary'
                                       : docItem.docType === 'Service Manual'
                                       ? 'text-primary-container'
-                                      : docItem.docType === 'Shop Standard'
+                                      : docItem.docType === 'Shop Standard (SOP)' || docItem.docType === 'Shop Standard'
                                       ? 'text-primary'
-                                      : 'text-secondary'
+                                      : docItem.docType === 'Tooling Catalog' || docItem.docType === 'Catalog'
+                                      ? 'text-secondary'
+                                      : 'text-primary'
                                   }`}
                                 >
                                   <span className="material-symbols-outlined text-[20px]">
                                     {docItem.docType === 'OEM Manual' && 'menu_book'}
                                     {docItem.docType === 'Service Manual' && 'build_circle'}
-                                    {docItem.docType === 'Shop Standard' && 'fact_check'}
-                                    {docItem.docType === 'Catalog' && 'calculate'}
-                                    {docItem.docType === 'Param Sheet' && 'terminal'}
+                                    {(docItem.docType === 'Shop Standard (SOP)' || docItem.docType === 'Shop Standard') && 'fact_check'}
+                                    {(docItem.docType === 'Tooling Catalog' || docItem.docType === 'Catalog') && 'calculate'}
+                                    {(docItem.docType === 'Param & Macro Sheet' || docItem.docType === 'Param Sheet') && 'terminal'}
                                   </span>
                                 </div>
                                 <div className="flex flex-col min-w-0 max-w-[280px]">
@@ -496,15 +474,14 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                                 >
                                   <span className="material-symbols-outlined text-[18px]">visibility</span>
                                 </button>
-                                <button
-                                  onClick={() => {
-                                    alert(`Source archive downloaded: ${docItem.name}.pdf`);
-                                  }}
+                                <a
+                                  href={`/api/kb/file/${encodeURIComponent(docItem.id)}?download=true`}
+                                  download={docItem.filename || `${docItem.name}.pdf`}
                                   className="p-1.5 rounded hover:bg-surface-bright hover:text-on-surface transition-colors cursor-pointer"
                                   title="Download Source"
                                 >
                                   <span className="material-symbols-outlined text-[18px]">download</span>
-                                </button>
+                                </a>
                                 {isAdmin && (
                                   <button
                                     onClick={() => handleDeleteDocument(docItem.id)}
@@ -664,33 +641,21 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
               >
                 <option value="OEM Manual">OEM Manual</option>
                 <option value="Service Manual">Service Manual</option>
-                <option value="Shop Standard">Shop Standard (SOP)</option>
-                <option value="Catalog">Tooling Catalog</option>
-                <option value="Param Sheet">Param & Macro Sheet</option>
+                <option value="Shop Standard (SOP)">Shop Standard (SOP)</option>
+                <option value="Tooling Catalog">Tooling Catalog</option>
+                <option value="Param & Macro Sheet">Param & Macro Sheet</option>
               </select>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-[10px] uppercase text-tertiary font-bold tracking-wider">Ref Code</label>
-              <input
-                value={uploadState.refCode}
-                onChange={(e) => setUploadState({ ...uploadState, refCode: e.target.value })}
-                placeholder="B-64694EN/01"
-                className="px-3 py-2.5 rounded-xl bg-surface-container-low border border-outline-variant/30 text-on-surface font-body-sm text-sm focus:outline-none focus:border-primary-container"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-[10px] uppercase text-tertiary font-bold tracking-wider">Page Count</label>
-              <input
-                type="number"
-                min={1}
-                value={uploadState.pages}
-                onChange={(e) => setUploadState({ ...uploadState, pages: parseInt(e.target.value) || 1 })}
-                className="px-3 py-2.5 rounded-xl bg-surface-container-low border border-outline-variant/30 text-on-surface font-body-sm text-sm focus:outline-none focus:border-primary-container"
-              />
-            </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="font-mono text-[10px] uppercase text-tertiary font-bold tracking-wider">Ref Code</label>
+            <input
+              value={uploadState.refCode}
+              onChange={(e) => setUploadState({ ...uploadState, refCode: e.target.value })}
+              placeholder="B-64694EN/01"
+              className="px-3 py-2.5 rounded-xl bg-surface-container-low border border-outline-variant/30 text-on-surface font-body-sm text-sm focus:outline-none focus:border-primary-container"
+            />
           </div>
 
           <div

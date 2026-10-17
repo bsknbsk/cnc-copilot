@@ -297,13 +297,19 @@ kbRouter.get('/file/:identifier', async (req: Request, res: Response) => {
     }
 
     const mime = docData.mimeType || 'application/pdf';
-    const filename = docData.filename || `${docData.name || 'manual'}.pdf`;
+    const rawFilename = docData.filename || `${docData.name || 'manual'}.pdf`;
+    const cleanFilename = path.basename(rawFilename);
+    const isDownload = req.query.download === 'true' || req.query.download === '1';
 
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `${isDownload ? 'attachment' : 'inline'}; filename="${cleanFilename}"; filename*=UTF-8''${encodeURIComponent(cleanFilename)}`
+    );
     file.createReadStream().pipe(res);
   } catch (err: any) {
     console.error(JSON.stringify({ level: 'error', route: 'GET /api/kb/file/:identifier', error: err?.message || String(err) }));
     res.status(500).send('Failed to retrieve document file');
   }
 });
+

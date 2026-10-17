@@ -138,5 +138,28 @@ This document records the approved design exceptions and UI updates applied to t
    - **Change in `src/components/ShopfloorAgent.tsx` and `server/routes/kb.ts`:** Citations rendered in chat bubbles and diagnostic cards link directly to `/api/kb/file/:identifier` opening PDF documentation in a new browser tab. When no manual data is retrieved, answers include a clear, concise one-line guardrail: `"Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:"`.
    - **Rationale:** Strictly enforces honesty rules and provides instant grounding verification against uploaded manuals.
 
+## Approved UI Changes: Knowledge Base Controls, Categories, and Layout Cleanup
 
+1. **Individual File Download**
+   - **Change in `src/components/KnowledgeBase.tsx` and `server/routes/kb.ts`:** Updated the download action in the documents table to directly download the actual stored document source via `/api/kb/file/:identifier?download=true` with real file headers (`Content-Disposition: attachment; filename=...`), replacing the mock alert.
+   - **Rationale:** Enables shopfloor operators and engineers to download original PDF manuals and parameter sheets directly from the verified memory corpus.
 
+2. **Removal of Generic Manifest Export Button**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Removed the generic "Export" button from the Verified Memory Corpus section header.
+   - **Rationale:** Removes unnecessary JSON metadata download action.
+
+3. **Removal of Physics RAG Engine Header Panel**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Removed the redundant `PageHeader` card labeled "Physics RAG Engine" with its duplicate "Upload Manual" button.
+   - **Rationale:** Eliminates duplicate upload buttons and streamlines the layout directly to the metrics and action controls bar.
+
+4. **Removal of Static "All Corpora Synchronized" Panel**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Removed the static idle status panel that stated "All Corpora Synchronized", retaining active ingestion notices only when real background indexing jobs are in progress.
+   - **Rationale:** Eliminates placeholder status cards when no indexing work is active.
+
+5. **Removal of Page Count from Upload Form**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Removed the manual "Page Count" input field from the technical document upload drawer.
+   - **Rationale:** Operators do not need to manually count and input page totals during manual uploads.
+
+6. **Alignment of Upload Classification and Filter Categories**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Unified classification and filter category options to: OEM Manual, Service Manual, Shop Standard (SOP), Tooling Catalog, and Param & Macro Sheet.
+   - **Rationale:** Ensures complete consistency between upload categorization and document filtering.
