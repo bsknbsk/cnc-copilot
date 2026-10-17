@@ -78,7 +78,7 @@ flowchart TD
     Client -->|Google Sign-In| Auth
     Client -->|Real-Time Subscriptions| Firestore
     CloudRun -->|Token Verification| Auth
-    CloudRun -->|@google/genai SDK| Gemini
+    CloudRun -->|Google GenAI SDK| Gemini
     CloudRun -->|Admin SDK| Firestore
     CloudRun -->|Storage Admin SDK| GCS
 ```
