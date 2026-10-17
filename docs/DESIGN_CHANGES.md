@@ -56,3 +56,29 @@ This document records the approved design exceptions and UI updates applied to t
 9. **Voice Recording via MediaRecorder and Inline Transcription**
    - **Change:** Replaced Web Speech API with `MediaRecorder` audio capture (supporting `audio/webm;codecs=opus`, `audio/mp4`, `audio/ogg`), active recording timer, and backend inline transcription via `POST /api/agent/transcribe` calling `MODEL_FLASH`.
    - **Rationale:** Ensures reliable cross-browser audio input on desktop Chrome, Safari, and mobile Android.
+
+## Approved UI Changes: Academy Trainee DB, Live Stats, and Controls
+
+1. **Live Global Stats Row**
+   - **Change:** Added a 5-metric summary row ("Learners", "Active (7 days)", "Completions", "Avg crashes before pass", "Most common crash") backed by real-time subscription to `academy_stats/global`.
+   - **Rationale:** Displays genuine aggregate operational metrics to all signed-in learners with zero fabricated data.
+
+2. **Admin Trainee Roster Drawer**
+   - **Change:** Added a "View trainees" action for admins in the stats row that opens a drawer containing trainee metrics (name, level, XP, missions passed, crashes, last active) from `GET /api/academy/trainees`.
+   - **Rationale:** Provides instructors with administrative oversight without cluttering the trainee experience.
+
+3. **Interactive Badges Shelf**
+   - **Change:** Wired the 4 header badge icons to an Academy Badges Shelf with tooltips (`title` and `aria-label`), grayed states for locked badges, and a slide-in Badges Drawer explaining qualification criteria and earned dates.
+   - **Rationale:** Eliminates dead placeholder icons and motivates learners through clear milestones.
+
+4. **Section Header and Card Action Standardization**
+   - **Change:** Updated "INDUSTRIAL CERTIFICATION PATH" to "TRAINING PATH". Replaced "BEGIN DIAGNOSTIC SESSION" with "START MISSION" on the current active mission, "REPLAY MISSION" on passed missions, and hidden on locked missions.
+   - **Rationale:** Clarifies path status and prevents misleading entry points into locked content.
+
+5. **Gemini Instructor Label**
+   - **Change:** Replaced "PHYSICS LINK ACTIVE" with "Gemini instructor" and removed the simulated status dot in `InstructorPanel.tsx`.
+   - **Rationale:** Accurately communicates AI assistance without falsely claiming a real-time hardware physics link.
+
+6. **Server-Authoritative Evaluation and Audio Input**
+   - **Change:** Server evaluates G-code run programs via `POST /api/academy/event`, computing collisions, XP, streaks, levels, and badges. Wired the microphone button in `InstructorPanel.tsx` to browser speech recognition for natural voice queries.
+   - **Rationale:** Ensures tamper-proof progression and convenient multimodal assistance in noisy shop environments.

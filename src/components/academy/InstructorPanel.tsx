@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GlassPanel } from '../ui/Layout.js';
-import { ButtonSecondary, IconButton } from '../ui/Button.js';
 import { Badge } from '../ui/Badge.js';
+import { IconButton } from '../ui/Button.js';
 import { apiFetch } from '../../lib/firebase.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { CollisionEvent } from '../../engine/crash.js';
@@ -13,6 +13,7 @@ interface Message {
 
 interface InstructorPanelProps {
   missionId: string;
+  sessionId?: string;
   hintsRevealed: number;
   onRevealHint: () => void;
   xpPenalty: number;
@@ -20,10 +21,21 @@ interface InstructorPanelProps {
   crashEvent?: CollisionEvent | null;
 }
 
-export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPenalty, program, crashEvent }: InstructorPanelProps) {
+export function InstructorPanel({
+  missionId,
+  sessionId,
+  hintsRevealed,
+  onRevealHint,
+  xpPenalty,
+  program,
+  crashEvent,
+}: InstructorPanelProps) {
   const { profile } = useAuth();
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'instructor', text: "Welcome to the Crash Lab. I'm here to ensure you learn from failure. Analyze the program, identify the kinematic risk, and correct the G-code." }
+    {
+      role: 'instructor',
+      text: "Welcome to the Crash Lab. I'm here to ensure you learn from failure. Analyze the program, identify the kinematic risk, and correct the G-code.",
+    },
   ]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -32,7 +44,8 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
     if (!inputText.trim()) return;
 
     const userMsg: Message = { role: 'user', text: inputText };
-    setMessages(prev => [...prev, userMsg]);
+    setMessages((prev) => [...prev, userMsg]);
+    const textToSend = inputText;
     setInputText('');
     setIsSending(true);
 
@@ -46,19 +59,19 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
           crashEvent,
           hintLevel: Math.max(1, Math.min(3, hintsRevealed || 1)),
           language: profile?.preferredLanguage || 'en',
-          question: inputText,
-        })
+          question: textToSend,
+        }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setMessages(prev => [...prev, { role: 'instructor', text: data.reply }]);
+        setMessages((prev) => [...prev, { role: 'instructor', text: data.reply }]);
       } else {
-        setMessages(prev => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
+        setMessages((prev) => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
       }
     } catch (err) {
       console.warn('[Instructor] Chat error:', err);
-      setMessages(prev => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
+      setMessages((prev) => [...prev, { role: 'instructor', text: 'Instructor is currently unavailable. Please retry.' }]);
     } finally {
       setIsSending(false);
     }
@@ -68,6 +81,19 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
     const nextLevel = Math.min(3, hintsRevealed + 1);
     onRevealHint();
     setIsSending(true);
+
+    if (sessionId) {
+      apiFetch('/api/academy/event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          missionId,
+          type: 'hint',
+          detail: { hintLevel: nextLevel },
+        }),
+      }).catch((err) => console.warn('[Instructor] Event hint warn:', err));
+    }
 
     try {
       const res = await apiFetch('/api/instructor', {
@@ -79,12 +105,12 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
           crashEvent,
           hintLevel: nextLevel,
           language: profile?.preferredLanguage || 'en',
-        })
+        }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        setMessages(prev => [...prev, { role: 'instructor', text: data.reply }]);
+        setMessages((prev) => [...prev, { role: 'instructor', text: data.reply }]);
       }
     } catch (err) {
       console.warn('[Instructor] Hint fetch error:', err);
@@ -93,10 +119,24 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
     }
   };
 
+  const handleVoiceInput = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Speech recognition is not supported in this browser.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0]?.[0]?.transcript;
+      if (transcript) setInputText(transcript);
+    };
+    recognition.start();
+  };
+
   const quickQuestions = [
-    "Why did it crash?",
-    "What does this code do?",
-    "How do I check this on a real machine?"
+    'Why did it crash?',
+    'What does this code do?',
+    'How do I check this on a real machine?',
   ];
 
   return (
@@ -112,8 +152,7 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
         <div className="flex-1">
           <h3 className="font-headline-sm text-sm font-bold text-on-surface">Copilot Instructor</h3>
           <div className="flex items-center gap-2 mt-0.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-pulse"></span>
-            <span className="text-[10px] font-mono text-secondary uppercase font-bold tracking-wider">Physics Link Active</span>
+            <span className="text-[10px] font-mono text-secondary uppercase font-bold tracking-wider">Gemini instructor</span>
           </div>
         </div>
       </div>
@@ -122,14 +161,16 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
       <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-surface-container-high">
         {messages.map((m, i) => (
           <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-             <span className="font-mono text-[9px] text-tertiary-container uppercase mb-1">
+            <span className="font-mono text-[9px] text-tertiary-container uppercase mb-1">
               {m.role === 'instructor' ? 'Copilot' : 'Operator'}
             </span>
-            <div className={`max-w-[90%] p-3 rounded-xl text-xs leading-relaxed ${
-              m.role === 'user' 
-                ? 'bg-primary-container/10 text-on-surface rounded-tr-none border border-primary-container/20' 
-                : 'bg-surface-container-high text-tertiary rounded-tl-none border border-outline-variant/30'
-            }`}>
+            <div
+              className={`max-w-[90%] p-3 rounded-xl text-xs leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-primary-container/10 text-on-surface rounded-tr-none border border-primary-container/20'
+                  : 'bg-surface-container-high text-tertiary rounded-tl-none border border-outline-variant/30'
+              }`}
+            >
               {m.text}
             </div>
           </div>
@@ -153,10 +194,10 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
           </span>
           <span className="text-[10px] font-mono text-tertiary-container">{hintsRevealed}/3 Unlocked</span>
         </div>
-        
+
         <div className="space-y-2">
           {hintsRevealed < 3 && (
-            <button 
+            <button
               onClick={handleRevealHintClick}
               className="w-full h-10 px-4 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-xs font-bold text-on-surface flex items-center justify-between transition-all group"
             >
@@ -178,8 +219,8 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
       {/* Input Area */}
       <div className="p-4 bg-surface-container-low border-t border-outline-variant/30">
         <div className="flex flex-wrap gap-1.5 mb-3">
-          {quickQuestions.map(q => (
-            <button 
+          {quickQuestions.map((q) => (
+            <button
               key={q}
               onClick={() => setInputText(q)}
               className="px-2 py-1 rounded bg-surface-container border border-outline-variant/30 text-[10px] text-tertiary hover:text-on-surface hover:border-secondary transition-colors"
@@ -190,14 +231,14 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
         </div>
         <div className="flex items-center gap-2">
           <div className="flex-1 relative">
-            <input 
+            <input
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
               placeholder="Ask the instructor..."
               className="w-full h-10 pl-3 pr-10 rounded-lg bg-surface-container-lowest border border-outline-variant/30 text-xs text-on-surface focus:outline-none focus:border-secondary transition-all"
             />
-            <button 
+            <button
               onClick={handleSendMessage}
               disabled={isSending || !inputText.trim()}
               className="absolute right-1 top-1 w-8 h-8 rounded-md flex items-center justify-center text-secondary hover:bg-secondary/10 disabled:opacity-30"
@@ -205,7 +246,12 @@ export function InstructorPanel({ missionId, hintsRevealed, onRevealHint, xpPena
               <span className="material-symbols-outlined text-[20px]">send</span>
             </button>
           </div>
-          <IconButton icon="mic" title="Voice Input" className="w-10 h-10 min-w-0 min-h-0 bg-surface-container" />
+          <IconButton
+            icon="mic"
+            title="Voice Input"
+            onClick={handleVoiceInput}
+            className="w-10 h-10 min-w-0 min-h-0 bg-surface-container"
+          />
         </div>
       </div>
     </GlassPanel>

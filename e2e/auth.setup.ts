@@ -17,7 +17,29 @@ setup('authenticate with Google', async ({ page }) => {
         existing.idb.firebaseLocalStorageDb.firebaseLocalStorage &&
         existing.idb.firebaseLocalStorageDb.firebaseLocalStorage.length > 0
       ) {
-        console.log('[auth.setup] Valid auth state already exists at e2e/.auth/state.json');
+        const fb = existing.idb.firebaseLocalStorageDb.firebaseLocalStorage[0];
+        const tokenMgr = fb?.value?.stsTokenManager;
+        if (tokenMgr?.expirationTime && tokenMgr.expirationTime < Date.now() + 300000 && tokenMgr.refreshToken) {
+          try {
+            const cfg = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+            const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${cfg.apiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(tokenMgr.refreshToken)}`
+            });
+            const data = await res.json();
+            if (data.id_token) {
+              tokenMgr.accessToken = data.id_token;
+              tokenMgr.refreshToken = data.refresh_token;
+              tokenMgr.expirationTime = Date.now() + parseInt(data.expires_in, 10) * 1000;
+              fs.writeFileSync(authFile, JSON.stringify(existing, null, 2));
+              console.log('[auth.setup] Refreshed expired auth token');
+            }
+          } catch (e) {
+            console.warn('[auth.setup] Failed to auto-refresh token:', e);
+          }
+        }
+        console.log('[auth.setup] Valid auth state exists at e2e/.auth/state.json');
         return;
       }
     } catch {

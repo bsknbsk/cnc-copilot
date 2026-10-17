@@ -5,6 +5,8 @@ import {
   sampleSegmentPoints,
   calculateMissionXP,
   calculateLevel,
+  computeStreak,
+  evaluateGCodeRun,
   CollisionEvent,
 } from '../src/engine/crash.js';
 import { parseAndVerifyGCode, GCodeSegment } from '../src/engine/gcode.js';
@@ -260,3 +262,60 @@ describe('Academy XP Formula and Level Thresholds', () => {
     expect(calculateLevel(1200)).toBe('Setter');
   });
 });
+
+describe('Academy Streak Computation (Asia/Kolkata)', () => {
+  it('initializes streak on first activity', () => {
+    const res = computeStreak(0, null);
+    expect(res.streakDays).toBe(1);
+    expect(res.lastStreakDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('keeps streak unchanged on same day activity', () => {
+    const now = new Date('2026-10-17T10:00:00Z');
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+    const res = computeStreak(5, today, now);
+    expect(res.streakDays).toBe(5);
+    expect(res.lastStreakDate).toBe(today);
+  });
+
+  it('increments streak when active on consecutive calendar day', () => {
+    const todayDate = new Date('2026-10-17T10:00:00Z');
+    const yesterdayDate = new Date('2026-10-16T10:00:00Z');
+    const yesterdayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(yesterdayDate);
+    const res = computeStreak(3, yesterdayStr, todayDate);
+    expect(res.streakDays).toBe(4);
+  });
+
+  it('resets streak to 1 when a day is missed', () => {
+    const todayDate = new Date('2026-10-17T10:00:00Z');
+    const oldDateStr = '2026-10-10';
+    const res = computeStreak(10, oldDateStr, todayDate);
+    expect(res.streakDays).toBe(1);
+  });
+});
+
+describe('Server Authoritative Pass Logic', () => {
+  it('decides pass only on zero crash events and zero critical findings', () => {
+    const mission1 = ACADEMY_MISSIONS[0];
+    const broken = evaluateGCodeRun(mission1.initialCode, mission1);
+    expect(broken.isSafe).toBe(false);
+    expect(broken.crashEvent).not.toBeNull();
+
+    const fixed = evaluateGCodeRun(`%
+O1001 (SAFE RUN)
+T01 M06 (16MM FLAT END MILL)
+G00 G90 G54 X10. Y10.
+G43 H01 Z50.
+S2500 M03
+Z10.
+G01 Z-5. F500.
+X70.
+G00 Z50.
+M30
+%`, mission1);
+    expect(fixed.isSafe).toBe(true);
+    expect(fixed.crashEvent).toBeNull();
+    expect(fixed.criticalFindings).toHaveLength(0);
+  });
+});
+

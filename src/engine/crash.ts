@@ -1,4 +1,4 @@
-import { GCodeSegment } from './gcode.js';
+import { GCodeSegment, parseAndVerifyGCode } from './gcode.js';
 
 export interface CollisionEvent {
   line: number;
@@ -229,6 +229,88 @@ export function calculateLevel(xp: number): 'Trainee' | 'Operator' | 'Setter' {
   return 'Trainee';
 }
 
+export function computeStreak(
+  currentStreakDays: number,
+  lastStreakDate: string | null | undefined,
+  now: Date = new Date()
+): { streakDays: number; lastStreakDate: string } {
+  const kolkataToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now);
+  if (!lastStreakDate) {
+    return { streakDays: 1, lastStreakDate: kolkataToday };
+  }
+  if (lastStreakDate === kolkataToday) {
+    return { streakDays: Math.max(1, currentStreakDays), lastStreakDate: kolkataToday };
+  }
+
+  // Calculate yesterday in Asia/Kolkata
+  const yesterdayDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const kolkataYesterday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(yesterdayDate);
+
+  if (lastStreakDate === kolkataYesterday) {
+    return { streakDays: Math.max(1, currentStreakDays) + 1, lastStreakDate: kolkataToday };
+  }
+
+  return { streakDays: 1, lastStreakDate: kolkataToday };
+}
+
+export function evaluateGCodeRun(
+  program: string,
+  mission: Mission
+): {
+  crashEvent: CollisionEvent | null;
+  criticalFindings: any[];
+  isSafe: boolean;
+} {
+  const parseResult = parseAndVerifyGCode(program);
+  const lines = program.split('\n');
+  let crashEvent: CollisionEvent | null = null;
+
+  for (const segment of parseResult.segments) {
+    let spindleOn = false;
+    let toolLengthComp = false;
+    let tapMode = false;
+    let feed = 0;
+    let rpm = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (i + 1 > segment.line) break;
+      const l = lines[i].toUpperCase();
+      if (l.includes('M03') || l.includes('M3')) spindleOn = true;
+      if (l.includes('M05') || l.includes('M5')) spindleOn = false;
+      if (l.includes('G43')) toolLengthComp = true;
+      if (l.includes('G49')) toolLengthComp = false;
+      if (l.includes('M29')) tapMode = true;
+      if (l.includes('G80')) tapMode = false;
+
+      const fMatch = l.match(/F(\d+(\.\d+)?)/);
+      if (fMatch) feed = parseFloat(fMatch[1]);
+
+      const sMatch = l.match(/S(\d+(\.\d+)?)/);
+      if (sMatch) rpm = parseFloat(sMatch[1]);
+    }
+
+    const modalState = {
+      spindleOn,
+      toolLengthComp,
+      tapMode,
+      feed,
+      rpm,
+      program,
+      pitch: mission.pitch,
+    };
+    const col = checkCollision(segment, modalState);
+    if (col) {
+      crashEvent = col;
+      break;
+    }
+  }
+
+  const criticalFindings = parseResult.findings.filter((f) => f.severity === 'CRITICAL');
+  const isSafe = !crashEvent && criticalFindings.length === 0;
+
+  return { crashEvent, criticalFindings, isSafe };
+}
+
 export interface Mission {
   id: string;
   name: string;
@@ -245,10 +327,10 @@ export const ACADEMY_MISSIONS: Mission[] = [
   {
     id: 'missing-offset',
     name: 'The Missing Offset',
-    description: 'WCS G54 Z-Datum mismatch on billet face.',
-    faultDescription: 'Operator ran G00 rapid without invoking G43 H01 tool height offset. The 16mm carbide end mill slammed directly into the datum fixture.',
+    description: 'New job on night shift. The tool was changed, but the program never activates tool length compensation. Run it and see what the machine does.',
+    faultDescription: 'New job on night shift. The tool was changed, but the program never activates tool length compensation. Run it and see what the machine does.',
     initialCode: `%
-O1001 (THE MISSING OFFSET)
+O1001 (FACE MILLING OP1)
 T01 M06 (16MM FLAT END MILL)
 G00 G90 G54 X10. Y10.
 S2500 M03
@@ -258,38 +340,38 @@ X70.
 G00 Z50.
 M30
 %`,
-    targetXP: 150,
+    targetXP: 100,
     badgeId: 'offset-master',
     levelReq: 0,
   },
   {
     id: 'rapid-stock',
     name: 'Rapid Into Stock',
-    description: 'High-speed Z-plunge without feed control.',
-    faultDescription: 'Program commands a G00 move directly into the raw material. Rapids are for positioning, not for entering stock.',
+    description: 'The approach move uses rapid traverse all the way down into the part.',
+    faultDescription: 'The approach move uses rapid traverse all the way down into the part.',
     initialCode: `%
-O1002 (RAPID INTO STOCK)
+O1002 (CONTOUR ROUGHING)
 T01 M06 (10MM FLAT END MILL)
 G00 G90 G54 X20. Y20.
 G43 H01 Z50.
 S3000 M03
-G00 Z-10.
+G00 Z-2.0
 G01 X60. F800.
 G00 Z50.
 M30
 %`,
-    targetXP: 150,
+    targetXP: 120,
     badgeId: 'safe-approach',
     levelReq: 0,
   },
   {
     id: 'stripped-tap',
     name: 'Stripped Tap',
-    description: 'M29 rigid tapping synchronization error.',
-    faultDescription: 'Rigid tapping requires strict F = S * Pitch ratio. If sync is lost, threads are stripped or tap breaks.',
+    description: 'Rigid tapping an M10 x 1.5 hole at 500 rpm. Check the feed.',
+    faultDescription: 'Rigid tapping an M10 x 1.5 hole at 500 rpm. Check the feed.',
     initialCode: `%
-O1003 (STRIPPED TAP)
-T01 M06 (M10x1.5)
+O1003 (THREAD TAPPING M10X1.5)
+T01 M06 (M10 TAP)
 G00 G90 G54 X40. Y25.
 G43 H01 Z20.
 S500 M03
@@ -307,21 +389,20 @@ M30
   {
     id: 'dead-spindle',
     name: 'Dead Spindle',
-    description: 'Attempting to cut with a stationary spindle.',
-    faultDescription: 'Mechanical interlock failure or programming oversight. Entering material without M03 rotation will snap the tool instantly.',
+    description: 'The spindle command before the first cut is wrong.',
+    faultDescription: 'The spindle command before the first cut is wrong.',
     initialCode: `%
-O1004 (DEAD SPINDLE)
+O1004 (SLOT MILLING)
 T01 M06 (10MM FLAT END MILL)
 G00 G90 G54 X30. Y30.
 G43 H01 Z10.
-S3000 M03
-M05
+S3000 M05
 G01 Z-5. F100.
 X50.
 G00 Z50.
 M30
 %`,
-    targetXP: 200,
+    targetXP: 100,
     badgeId: 'safe-starter',
     levelReq: 400,
   },

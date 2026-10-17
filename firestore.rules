@@ -47,11 +47,23 @@ service cloud.firestore {
           && request.resource.data.createdAt is string;
         allow update, delete: if false;
       }
+    }
 
-      match /academy/{document=**} {
+    // trainees/{uid} collection and sessions subcollection
+    match /trainees/{uid} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+
+      match /sessions/{sessionId} {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+    }
+
+    // academy_stats global document
+    match /academy_stats/global {
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
     // kb_docs: readable by any signed-in user, no client writes (server only)
