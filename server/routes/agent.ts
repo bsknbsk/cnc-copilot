@@ -383,8 +383,21 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
   };
   const targetLanguageName = langNames[language] || 'English';
 
+  const localizedGuardrails: Record<string, string> = {
+    en: 'Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:',
+    hi: 'आपके अपलोड किए गए मैनुअल में नहीं मिला। मानक इंजीनियरिंग ज्ञान के आधार पर सामान्य मार्गदर्शन यहाँ दिया गया है:',
+    ml: 'നിങ്ങൾ അപ്‌ലോഡ് ചെയ്ത മാനുവലുകളിൽ കണ്ടെത്തിയില്ല. സാധാരണ എഞ്ചിനീയറിംഗ് അറിവിനെ അടിസ്ഥാനമാക്കിയുള്ള പൊതു മാർഗ്ഗനിർദ്ദേശം ഇതാ:',
+    ta: 'நீங்கள் பதிவேற்றிய கையேடுகளில் கிடைக்கவில்லை. நிலையான பொறியியல் அறிவின் அடிப்படையில் பொதுவான வழிகாட்டுதல் இதோ:',
+  };
+
   const systemInstruction = `You are CNC Copilot, an industrial shopfloor assistant for CNC operators and manufacturing engineers on ${controller} controllers.
-Reply entirely in ${targetLanguageName} (${language}); keep G-codes, alarm numbers and parameter numbers in original standard form.
+
+LANGUAGE INSTRUCTIONS:
+1. Primary language preference selected by the operator: ${targetLanguageName} (${language}).
+2. If the user typed their question in a specific language (such as Hindi, Malayalam, Tamil, or English), respond in the language they used to type their question.
+3. If the input is in the language corresponding to the selected preference dropdown or if the input language is ambiguous/neutral, reply in ${targetLanguageName} (${language}).
+4. Keep standard engineering identifiers, G-codes (e.g., G00, G84), M-codes, alarm numbers (e.g., SV0401, ALM 1004), and parameter numbers in original standard form.
+
 Decide the intent of the operator's message and answer in the matching style:
 - greeting or small talk: one or two friendly sentences, then one line offering help with alarms, cutting parameters, G-code or the Crash Lab. No headings, no lists.
 - general CNC question: a direct answer in plain markdown, short paragraphs or a short list, under 180 words unless asked for detail.
@@ -399,7 +412,7 @@ ${availableDocs.length > 0 ? availableDocs.map(d => `- ID: ${d.id} | "${d.name}"
 If your answer retrieves and cites specific passages from any uploaded manual listed above, populate the citations list with the documentName, matching docId, pageNumber (if known), and snippet.
 If the requested information is not in the uploaded manuals, return an empty citations array (citations: []).
 Never claim you checked manuals, registers, sensors or telemetry unless citations are populated. Never state a confidence score.
-When resetting alarms, changing parameters or bypassing interlocks is involved, provide a concise one-line safety note.`;
+When resetting alarms, changing parameters or bypassing interlocks is involved, provide a concise one-line safety note in the response language.`;
 
   try {
     const ai = getGemini();
@@ -476,8 +489,9 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
 
       // Honesty & Grounding Rule: If no uploaded manual was cited, prefix response with concise one-line guardrail
       if (citations.length === 0 && (intent === 'diagnosis' || intent === 'general')) {
-        const guardrailPrefix = 'Not found in your uploaded manuals. Here is general guidance based on standard engineering knowledge:';
-        if (!answerMarkdown.toLowerCase().includes('not found in your uploaded manuals')) {
+        const guardrailPrefix = localizedGuardrails[language] || localizedGuardrails.en;
+        const enPrefix = localizedGuardrails.en;
+        if (!answerMarkdown.toLowerCase().includes('not found in your uploaded manuals') && !answerMarkdown.includes(guardrailPrefix)) {
           answerMarkdown = `${guardrailPrefix}\n\n${answerMarkdown}`;
         }
       }
@@ -710,3 +724,41 @@ agentRouter.get('/image', requireAuth, async (req: Request, res: Response) => {
     res.status(500).json({ error: 'storage_error', message: 'Failed to generate signed URL' });
   }
 });
+
+// Delete chat session and its subcollection messages
+agentRouter.delete('/chat/:chatId', requireAuth, async (req: Request, res: Response) => {
+  const user = req.user!;
+  const { chatId } = req.params;
+  if (!chatId) {
+    res.status(400).json({ error: 'missing_chat_id', message: 'Chat ID is required' });
+    return;
+  }
+
+  try {
+    const chatRef = adminDb.collection('users').doc(user.uid).collection('chats').doc(chatId);
+    const msgsSnap = await chatRef.collection('messages').get();
+
+    if (!msgsSnap.empty) {
+      const batches = [];
+      let currentBatch = adminDb.batch();
+      let count = 0;
+      msgsSnap.docs.forEach((docSnap) => {
+        currentBatch.delete(docSnap.ref);
+        count++;
+        if (count % 400 === 0) {
+          batches.push(currentBatch.commit());
+          currentBatch = adminDb.batch();
+        }
+      });
+      batches.push(currentBatch.commit());
+      await Promise.all(batches);
+    }
+
+    await chatRef.delete();
+    res.json({ success: true, deletedChatId: chatId });
+  } catch (err: any) {
+    console.error(JSON.stringify({ level: 'error', route: 'DELETE /api/agent/chat/:chatId', error: err?.message || String(err) }));
+    res.status(500).json({ error: 'delete_failed', message: err?.message || 'Failed to delete chat' });
+  }
+});
+

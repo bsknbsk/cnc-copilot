@@ -163,3 +163,21 @@ This document records the approved design exceptions and UI updates applied to t
 6. **Alignment of Upload Classification and Filter Categories**
    - **Change in `src/components/KnowledgeBase.tsx`:** Unified classification and filter category options to: OEM Manual, Service Manual, Shop Standard (SOP), Tooling Catalog, and Param & Macro Sheet.
    - **Rationale:** Ensures complete consistency between upload categorization and document filtering.
+
+## Approved UI Changes: Shopfloor Agent Controller Filtering, Chat Deletion, and KB Chunk Inspector Removal
+
+1. **Removal of Active Controller Profile Option Panel and Local Filter Chips**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Removed the bottom "Active Controller Profile" button panel and local filter chips from the chat history sidebar.
+   - **Rationale:** Centralizes controller filtering around the global controller selector in the top navigation header. Chat history is now filtered based solely on the global active controller.
+
+2. **Fixed Delete Conversation Action**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Connected the header delete button next to Export to trigger the session delete confirmation dialog and invoke `DELETE /api/agent/chat/:chatId` for clean server-side and client-side deletion.
+   - **Rationale:** Ensures conversations are cleanly purged from the sidebar history and database upon operator confirmation.
+
+3. **Natural Multi-Language Prompting and Response**
+   - **Change in `server/routes/agent.ts`:** Instructed the agent to identify and answer in the language typed by the operator (Hindi, Malayalam, Tamil, or English) or the selected language preference, keeping G-code and machine terms standard.
+   - **Rationale:** Supports multilingual machine shop operators across regional dialects while preserving exact technical codes.
+
+4. **Removal of Chunk Inspector Widget from Knowledge Base**
+   - **Change in `src/components/KnowledgeBase.tsx`:** Removed the Inspect Chunks visibility button in document table rows and the Chunk Inspector Drawer component.
+   - **Rationale:** Operators access full documents and verified citations directly; granular vector chunk inspection is no longer needed on the shopfloor document view.

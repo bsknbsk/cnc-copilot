@@ -98,7 +98,6 @@ export function ShopfloorAgent({
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId || null);
   const [loadingChats, setLoadingChats] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [controllerFilter, setControllerFilter] = useState<'all' | 'fanuc' | 'mitsubishi' | 'generic'>('all');
 
   // 3-dot dropdown menu & hard delete modal state
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null);
@@ -142,13 +141,12 @@ export function ShopfloorAgent({
   const cameraFallbackInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   
-  const [activeController, setActiveController] = useState<string>(
-    profile?.preferredController === 'mitsubishi'
-      ? 'Mitsubishi M80'
-      : profile?.preferredController === 'generic'
-      ? 'Generic ISO'
-      : 'Fanuc 0i-MF'
-  );
+  const activeController = useMemo(() => {
+    const ctrl = profile?.preferredController || 'fanuc';
+    if (ctrl === 'mitsubishi') return 'Mitsubishi M80';
+    if (ctrl === 'generic') return 'Generic ISO';
+    return 'Fanuc 0i-MF';
+  }, [profile?.preferredController]);
 
   const [selectedCitation, setSelectedCitation] = useState<{
     documentName: string;
@@ -333,15 +331,15 @@ export function ShopfloorAgent({
 
   const filteredChats = useMemo(() => {
     let list = chats;
-    if (controllerFilter !== 'all') {
-      list = list.filter((c) => {
-        const cCtrl = (c.controller || '').toLowerCase();
-        if (controllerFilter === 'fanuc') return cCtrl.includes('fanuc');
-        if (controllerFilter === 'mitsubishi') return cCtrl.includes('mitsu');
-        if (controllerFilter === 'generic') return cCtrl.includes('generic') || cCtrl.includes('iso');
-        return true;
-      });
-    }
+    const globalCtrl = (profile?.preferredController || 'fanuc').toLowerCase();
+    list = list.filter((c) => {
+      const cCtrl = (c.controller || '').toLowerCase();
+      if (globalCtrl === 'fanuc') return cCtrl.includes('fanuc');
+      if (globalCtrl === 'mitsubishi') return cCtrl.includes('mitsu');
+      if (globalCtrl === 'generic') return cCtrl.includes('generic') || cCtrl.includes('iso');
+      return true;
+    });
+
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter((c) => 
@@ -356,7 +354,17 @@ export function ShopfloorAgent({
       const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
       return bTime - aTime;
     });
-  }, [chats, controllerFilter, searchQuery]);
+  }, [chats, profile?.preferredController, searchQuery]);
+
+  // Synchronize active chat when controller filter changes
+  useEffect(() => {
+    if (filteredChats.length > 0) {
+      const exists = filteredChats.some((c) => c.id === activeChatId);
+      if (!exists) {
+        setActiveChatId(filteredChats[0].id);
+      }
+    }
+  }, [filteredChats, activeChatId]);
 
   const activeChat = useMemo(() => {
     return chats.find(c => c.id === activeChatId);
@@ -511,31 +519,7 @@ export function ShopfloorAgent({
   };
 
   const handleConfirmDelete = async (chatId: string) => {
-    if (!user?.uid) {
-      setChats((prev) => prev.filter((c) => c.id !== chatId));
-      if (activeChatId === chatId) {
-        const remaining = chats.filter((c) => c.id !== chatId);
-        setActiveChatId(remaining.length > 0 ? remaining[0].id : null);
-        setMessages([]);
-      }
-      setChatToDelete(null);
-      return;
-    }
-
-    try {
-      const msgsSnap = await getDocs(
-        collection(db, 'users', user.uid, 'chats', chatId, 'messages')
-      );
-      if (!msgsSnap.empty) {
-        const batch = writeBatch(db);
-        msgsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
-        await batch.commit();
-      }
-      await deleteDoc(doc(db, 'users', user.uid, 'chats', chatId));
-    } catch (err) {
-      console.warn('[ShopfloorAgent] Delete chat failed:', err);
-    }
-
+    // 1. Immediately remove from local state so UI updates instantly
     setChats((prev) => prev.filter((c) => c.id !== chatId));
     if (activeChatId === chatId) {
       const remaining = chats.filter((c) => c.id !== chatId);
@@ -543,6 +527,29 @@ export function ShopfloorAgent({
       setMessages([]);
     }
     setChatToDelete(null);
+
+    // 2. Perform server-authoritative and client-side deletion
+    if (user?.uid) {
+      try {
+        await apiFetch(`/api/agent/chat/${chatId}`, { method: 'DELETE' });
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Server delete notice:', err);
+      }
+
+      try {
+        const msgsSnap = await getDocs(
+          collection(db, 'users', user.uid, 'chats', chatId, 'messages')
+        );
+        if (!msgsSnap.empty) {
+          const batch = writeBatch(db);
+          msgsSnap.forEach((docSnap) => batch.delete(docSnap.ref));
+          await batch.commit();
+        }
+        await deleteDoc(doc(db, 'users', user.uid, 'chats', chatId));
+      } catch (err) {
+        console.warn('[ShopfloorAgent] Client delete notice:', err);
+      }
+    }
   };
 
   const processImageFile = (fileOrBlob: Blob | File): Promise<string> => {
@@ -1086,32 +1093,6 @@ export function ShopfloorAgent({
                 className="px-2"
               />
 
-              {/* Controller Filter Chips */}
-              <div className="flex items-center gap-1 px-1 mb-2 overflow-x-auto scrollbar-none">
-                {[
-                  { id: 'all' as const, label: 'All' },
-                  { id: 'fanuc' as const, label: 'Fanuc' },
-                  { id: 'mitsubishi' as const, label: 'Mitsu' },
-                  { id: 'generic' as const, label: 'Generic' },
-                ].map((f) => {
-                  const isSel = controllerFilter === f.id;
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setControllerFilter(f.id)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors whitespace-nowrap ${
-                        isSel
-                          ? 'bg-secondary text-surface-container-lowest font-bold shadow-sm'
-                          : 'bg-surface-container text-tertiary hover:text-on-surface'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  );
-                })}
-              </div>
-
               {loadingChats ? (
                 <div className="flex flex-col gap-2 p-2">
                   <Skeleton className="h-16" />
@@ -1223,34 +1204,6 @@ export function ShopfloorAgent({
                 ))
               )}
             </div>
-
-            {/* Bottom Machine Profile Selector */}
-            <div className="p-space-md bg-surface-container-low flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-tertiary-container font-label-sm text-label-sm uppercase tracking-widest font-mono">Active Controller Profile</span>
-                <span className="material-symbols-outlined text-tertiary-container text-[16px]">tune</span>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {[
-                  { id: 'fanuc', label: 'Fanuc', sub: '0i-MF' },
-                  { id: 'mitsubishi', label: 'Mitsubishi', sub: 'M80' },
-                  { id: 'generic', label: 'Generic', sub: 'ISO' }
-                ].map(ctrl => {
-                  const isSelected = activeController.toLowerCase().includes(ctrl.id) || (ctrl.id === 'mitsubishi' && activeController.toLowerCase().includes('mitsu'));
-                  return (
-                    <button 
-                      key={ctrl.id}
-                      onClick={() => setActiveController(`${ctrl.label} ${ctrl.sub}`)}
-                      className={`px-2 py-2 rounded ${isSelected ? 'bg-secondary-container/20 text-secondary font-bold shadow-[0_0_12px_rgba(34,211,238,0.25)]' : 'bg-surface-container text-tertiary hover:text-on-surface'} font-label-sm text-label-sm uppercase font-mono tracking-tight flex flex-col items-center gap-0.5 text-center transition-all`} 
-                      type="button"
-                    >
-                      <span>{ctrl.label}</span>
-                      <span className={`text-[9px] ${isSelected ? 'text-secondary/80' : 'text-tertiary-container'}`}>{ctrl.sub}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
           </aside>
 
           {/* RIGHT/MAIN: Interactive Diagnostic Stream */}
@@ -1280,8 +1233,12 @@ export function ShopfloorAgent({
                 <IconButton 
                   icon="delete_sweep" 
                   onClick={() => {
-                    if (activeChat) setChatToDelete(activeChat);
-                    else setMessages([]);
+                    const target = activeChat || chats.find((c) => c.id === activeChatId) || (activeChatId ? { id: activeChatId, title: 'Current Diagnostic Session', controller: activeController } : null);
+                    if (target) {
+                      setChatToDelete(target);
+                    } else {
+                      setMessages([]);
+                    }
                   }} 
                   title="Delete Conversation" 
                   className="w-9 h-9 min-w-0 min-h-0" 

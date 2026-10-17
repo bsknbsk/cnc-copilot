@@ -64,8 +64,7 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 4;
 
-  // Modals & inspect
-  const [inspectDoc, setInspectDoc] = useState<KBDocument | null>(null);
+  // Modals
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadState, setUploadState] = useState({
     name: '',
@@ -467,13 +466,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
                             </td>
                             <td className="py-space-sm px-space-md text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-1 text-tertiary">
-                                <button
-                                  onClick={() => setInspectDoc(docItem)}
-                                  className="p-1.5 rounded hover:bg-surface-bright hover:text-secondary transition-colors cursor-pointer"
-                                  title="Inspect Chunks"
-                                >
-                                  <span className="material-symbols-outlined text-[18px]">visibility</span>
-                                </button>
                                 <a
                                   href={`/api/kb/file/${encodeURIComponent(docItem.id)}?download=true`}
                                   download={docItem.filename || `${docItem.name}.pdf`}
@@ -548,57 +540,6 @@ export function KnowledgeBase({ onNavigate }: KnowledgeBaseProps) {
         </div>
       </div>
     </div>
-
-      {/* Chunk Inspector Drawer */}
-      <Drawer
-        isOpen={!!inspectDoc}
-        onClose={() => setInspectDoc(null)}
-        title={inspectDoc ? `Inspector: ${inspectDoc.name}` : 'Document Inspector'}
-        footer={
-          <div className="flex justify-end">
-            <ButtonSecondary onClick={() => setInspectDoc(null)}>Close Inspector</ButtonSecondary>
-          </div>
-        }
-      >
-        {inspectDoc && (
-          <div className="flex flex-col gap-space-md">
-            <div className="flex flex-col gap-1 pb-3 border-b border-outline-variant/20">
-              <span className="font-mono text-[10px] text-tertiary uppercase tracking-wider">{inspectDoc.refCode}</span>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary">{inspectDoc.controller}</Badge>
-                <Badge variant="tertiary">{inspectDoc.docType}</Badge>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-[10px] font-mono text-tertiary bg-surface-container-low p-2 rounded border border-outline-variant/10">
-              <span>Total Vector Chunks: {(inspectDoc.chunks || []).length || Math.round(inspectDoc.pages * 6)}</span>
-              <span className="text-secondary font-bold">Status: {inspectDoc.status}</span>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <span className="font-label-sm uppercase font-mono text-tertiary tracking-widest text-[10px]">Indexed Content Chunks</span>
-              {(inspectDoc.chunks && inspectDoc.chunks.length > 0) ? (
-                inspectDoc.chunks.map((chk, i) => (
-                  <Card key={chk.id || i} className="p-3 bg-surface-container-lowest border-outline-variant/20 flex flex-col gap-1.5">
-                    <div className="flex items-center justify-between font-mono text-[10px] text-secondary font-bold">
-                      <span>{chk.section}</span>
-                      <span>Page {chk.page}</span>
-                    </div>
-                    <p className="font-mono text-xs text-tertiary-fixed leading-relaxed border-l-2 border-primary-container/30 pl-2">{chk.snippet}</p>
-                    <div className="text-[10px] font-mono text-tertiary-container mt-1">Tokens: {chk.tokens}</div>
-                  </Card>
-                ))
-              ) : (
-                <EmptyState 
-                  icon="inventory_2"
-                  title="No chunks generated"
-                  description={`All ${inspectDoc.pages} pages vectorized into 768-dim embeddings.`}
-                />
-              )}
-            </div>
-          </div>
-        )}
-      </Drawer>
 
       {/* Upload Manual Drawer */}
       <Drawer

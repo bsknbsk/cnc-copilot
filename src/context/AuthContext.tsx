@@ -28,14 +28,39 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      const storedCtrl = localStorage.getItem('cnc_ctrl') as any;
+      const storedLang = localStorage.getItem('cnc_lang') as any;
+      return {
+        displayName: 'Operator',
+        email: '',
+        preferredLanguage: ['en', 'hi', 'ml', 'ta'].includes(storedLang) ? storedLang : 'en',
+        preferredController: ['fanuc', 'mitsubishi', 'generic'].includes(storedCtrl) ? storedCtrl : 'fanuc',
+        role: 'user',
+      };
+    }
+    return {
+      displayName: 'Operator',
+      email: '',
+      preferredLanguage: 'en',
+      preferredController: 'fanuc',
+      role: 'user',
+    };
+  });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
-        setProfile(null);
+        setProfile((prev) => ({
+          displayName: 'Operator',
+          email: '',
+          preferredLanguage: prev?.preferredLanguage || 'en',
+          preferredController: prev?.preferredController || 'fanuc',
+          role: 'user',
+        }));
         setLoading(false);
         return;
       }
@@ -126,21 +151,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updatePreferences = async (updates: { preferredLanguage?: 'en' | 'hi' | 'ml' | 'ta'; preferredController?: 'fanuc' | 'mitsubishi' | 'generic' }) => {
     try {
+      if (typeof window !== 'undefined') {
+        if (updates.preferredController) localStorage.setItem('cnc_ctrl', updates.preferredController);
+        if (updates.preferredLanguage) localStorage.setItem('cnc_lang', updates.preferredLanguage);
+      }
       // Update local state immediately for responsive UI
-      setProfile((prev) => (prev ? { ...prev, ...updates } : null));
+      setProfile((prev) => ({
+        displayName: 'Operator',
+        email: '',
+        preferredLanguage: 'en',
+        preferredController: 'fanuc',
+        role: 'user',
+        ...prev,
+        ...updates,
+      }));
 
       // Update Firestore document directly from client
       if (user) {
         const userDocRef = doc(db, 'users', user.uid);
         await setDoc(userDocRef, updates, { merge: true });
+        // Sync with server
+        await apiFetch('/api/user/preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
       }
-
-      // Sync with server
-      await apiFetch('/api/user/preferences', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates),
-      });
     } catch (err) {
       console.warn('Failed to update preferences:', err);
     }
