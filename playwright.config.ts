@@ -42,7 +42,7 @@ export default defineConfig({
     },
     {
       name: 'chromium',
-      testMatch: /(agent|academy-data)\.spec\.ts/,
+      testMatch: /(agent|academy-data|auth-gate)\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         storageState: 'e2e/.auth/state.json',

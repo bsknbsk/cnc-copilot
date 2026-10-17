@@ -146,7 +146,7 @@ test.describe('Academy Trainee Data & Interactive Controls', () => {
 
     // 3. Mission card click navigates to mission view (Navigation / DOM change)
     // Wait for Mission 01 to be interactive (status current or passed)
-    await expect(page.locator('text=START MISSION').or(page.locator('text=REPLAY MISSION'))).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('text=START MISSION').or(page.locator('text=REPLAY MISSION')).first()).toBeVisible({ timeout: 15000 });
     const mission1Card = page.locator('text=The Missing Offset').locator('xpath=ancestor::div[contains(@class, "cursor-pointer")]').first();
     await expect(mission1Card).toBeVisible();
     await mission1Card.click();

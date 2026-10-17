@@ -74,12 +74,16 @@ function AppContent() {
 
       {currentTab === 'agent' && (
         <ErrorBoundary route="agent" onNavigateHome={() => handleNavigate('home')}>
-          <ShopfloorAgent
-            initialChatId={navigationState?.chatId}
-            initialCamera={Boolean(navigationState?.openCamera)}
-            initialQuery={navigationState?.manualQuery}
-            onNavigate={handleNavigate}
-          />
+          {user ? (
+            <ShopfloorAgent
+              initialChatId={navigationState?.chatId}
+              initialCamera={Boolean(navigationState?.openCamera)}
+              initialQuery={navigationState?.manualQuery}
+              onNavigate={handleNavigate}
+            />
+          ) : (
+            <LandingPage onNavigate={handleNavigate} />
+          )}
         </ErrorBoundary>
       )}
 
@@ -97,21 +101,29 @@ function AppContent() {
 
       {currentTab === 'academy' && (
         <ErrorBoundary route="academy" onNavigateHome={() => handleNavigate('home')}>
-          {navigationState?.missionId ? (
-            <MissionView 
-              missionId={navigationState.missionId} 
-              onBack={() => handleNavigate('academy')} 
-              onNavigate={handleNavigate}
-            />
+          {user ? (
+            navigationState?.missionId ? (
+              <MissionView 
+                missionId={navigationState.missionId} 
+                onBack={() => handleNavigate('academy')} 
+                onNavigate={handleNavigate}
+              />
+            ) : (
+              <MissionMap onNavigate={handleNavigate} />
+            )
           ) : (
-            <MissionMap onNavigate={handleNavigate} />
+            <LandingPage onNavigate={handleNavigate} />
           )}
         </ErrorBoundary>
       )}
 
       {currentTab === 'kb' && (
         <ErrorBoundary route="kb" onNavigateHome={() => handleNavigate('home')}>
-          <KnowledgeBase onNavigate={handleNavigate} />
+          {user ? (
+            <KnowledgeBase onNavigate={handleNavigate} />
+          ) : (
+            <LandingPage onNavigate={handleNavigate} />
+          )}
         </ErrorBoundary>
       )}
     </AppShell>
