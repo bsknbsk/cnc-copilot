@@ -20,7 +20,7 @@ explainRouter.post('/explain', requireAuth, rateLimitAI, async (req, res) => {
     return;
   }
 
-  const prompt = `You are a senior CNC process engineer. Explain these cutting parameters to a machine operator in under 120 words. Do not change or recompute any number. Flag risks: power above 80% of machine limit, Vc outside the recommended band, deep holes, long overhang. Answer in ${language}.
+  const prompt = `You are a senior CNC process engineer. Explain these cutting parameters to a machine operator in under 120 words. Do not change or recompute any number. Flag risks: power above 80% of machine limit, Vc outside the recommended band, deep holes, long overhang. Respond in plain English unless the operator question was asked in another language. Keep numbers and technical symbols (RPM, mm/min, kW) standard.
 
 Operation Setup:
 - Process: ${inputs.process}
@@ -118,7 +118,7 @@ explainRouter.post('/gcode-review', requireAuth, rateLimitAI, async (req, res) =
     return;
   }
 
-  const prompt = `You are a senior CNC programmer for ${controller}. The deterministic checker found: ${JSON.stringify(findings)}. Explain each issue plainly for an operator, give the corrected code lines, and list any additional risks. Do not contradict the checker; you may add issues. Reply in ${language}.`;
+  const prompt = `You are a senior CNC programmer for ${controller}. The deterministic checker found: ${JSON.stringify(findings)}. Explain each issue plainly for an operator, give the corrected code lines, and list any additional risks. Do not contradict the checker; you may add issues. Respond in English unless the question was asked in a specific language.`;
 
   try {
     const ai = getGemini();

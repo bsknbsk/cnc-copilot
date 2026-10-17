@@ -196,3 +196,13 @@ This document records the approved design exceptions and UI updates applied to t
    - **Change in `src/components/ShopfloorAgent.tsx` and `server/routes/agent.ts`:** Attached `#page={pageNumber}` fragment to manual citation links so clicking a verified citation opens the PDF directly on the cited page number.
    - **Rationale:** Ensures operators immediately access relevant manual sections without manual scrolling.
 
+## Approved UI Changes: Page-Local Language Scoping and Defect Popup Repositioning
+
+1. **Page-Local Language Scoping for Shopfloor Agent**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Isolated language preference to the Shopfloor Agent page via local state and dedicated `shopfloor_agent_lang` storage, removing global preference mutation.
+   - **Rationale:** Ensures language selection made on the shopfloor agent does not alter global user profile preferences. Interactions across other pages (Academy, Calculator, Verifier) respond dynamically in the language the operator asked the questions.
+
+2. **Repositioning and 60% Transparency for Defect Simulation Popup**
+   - **Change in `src/components/academy/MissionView.tsx`:** Moved the Damage Assessment collision card from the center/bottom overlay to the top of the simulation window (`top-14`) with 60% transparent backdrop-blurred glass styling (`bg-black/60 backdrop-blur-md`).
+   - **Rationale:** Prevents the popup from obstructing the 3D tool contact, workpiece stock, and coordinates during training defect simulations while keeping all defect details legible.
+

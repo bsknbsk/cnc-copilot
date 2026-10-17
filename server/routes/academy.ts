@@ -477,8 +477,7 @@ Constraints:
 - Never output the full program.
 - In Level 1, ask a guiding question only.
 - In Level 2, point to the line and concept only.
-- In Level 3, provide only the single corrected line.
-- Reply in ${language}. Keep standard G-code notation unchanged.`;
+- Always respond in the language the student used to type their question (e.g. Hindi, Tamil, Malayalam, or English). If asking for a system hint without a custom question or if typed in English, respond in English. Keep standard G-code notation unchanged.`;
 
   try {
     const ai = getGemini();

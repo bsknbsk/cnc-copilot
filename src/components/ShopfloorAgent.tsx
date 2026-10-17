@@ -88,9 +88,10 @@ export function ShopfloorAgent({
     { code: 'ta' as const, label: 'தமிழ் (Tamil)', short: 'TA' },
   ];
 
-  const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'hi' | 'ml' | 'ta'>(
-    (profile?.preferredLanguage as any) || 'en'
-  );
+  const [selectedLanguage, setSelectedLanguage] = useState<'en' | 'hi' | 'ml' | 'ta'>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('shopfloor_agent_lang') : null;
+    return (saved && ['en', 'hi', 'ml', 'ta'].includes(saved)) ? (saved as any) : 'en';
+  });
   const [langMenuOpen, setLangMenuOpen] = useState(false);
 
   // Chat sessions state
@@ -1706,10 +1707,10 @@ export function ShopfloorAgent({
                               type="button"
                               onClick={() => {
                                 setSelectedLanguage(l.code);
-                                setLangMenuOpen(false);
-                                if (user) {
-                                  updatePreferences({ preferredLanguage: l.code });
+                                if (typeof window !== 'undefined') {
+                                  localStorage.setItem('shopfloor_agent_lang', l.code);
                                 }
+                                setLangMenuOpen(false);
                               }}
                               className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between hover:bg-surface-container transition-colors ${
                                 selectedLanguage === l.code

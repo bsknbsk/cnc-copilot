@@ -385,11 +385,59 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
               </div>
             </div>
 
-            {/* Force / RPM Readout */}
-            <div className="absolute left-4 top-14 z-10 pointer-events-none font-mono text-[11px] text-secondary bg-surface-container-lowest/80 px-2 py-0.5 rounded border border-outline-variant/30">
-              <span>Ft: {collision ? '0N' : currentModal.spindleOn ? '1128N' : '0N'}</span>
-              <span className="text-tertiary-container ml-2">RPM: {currentModal.spindleOn ? (currentModal.rpm || 5093) : 0}</span>
-            </div>
+            {/* Force / RPM Readout (visible when not in collision overlay) */}
+            {!collision && (
+              <div className="absolute left-4 top-14 z-10 pointer-events-none font-mono text-[11px] text-secondary bg-surface-container-lowest/80 px-2 py-0.5 rounded border border-outline-variant/30">
+                <span>Ft: {currentModal.spindleOn ? '1128N' : '0N'}</span>
+                <span className="text-tertiary-container ml-2">RPM: {currentModal.spindleOn ? (currentModal.rpm || 5093) : 0}</span>
+              </div>
+            )}
+
+            {/* Defect Simulation Damage Assessment Popup (Top of window with 60% transparency) */}
+            {collision && (
+              <div className="absolute top-14 left-3 right-3 z-20 pointer-events-auto animate-slide-in-right">
+                <div className="p-3.5 bg-black/60 backdrop-blur-md border border-error/50 rounded-xl shadow-2xl">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-error/20 flex items-center justify-center text-error border border-error/40 flex-shrink-0">
+                      <span className="material-symbols-outlined text-[20px]">fmd_bad</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-bold text-error text-xs uppercase tracking-wider flex items-center gap-2">
+                          <span>Damage Assessment</span>
+                          <span className="px-1.5 py-0.2 rounded bg-error/20 text-error font-mono text-[10px]">Line {collision.line}</span>
+                        </h4>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-1.5">
+                        <div>
+                          <span className="text-[9px] text-tertiary block uppercase">Part Damaged</span>
+                          <span className="text-xs font-bold text-on-surface truncate block">{collision.part}</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-tertiary block uppercase">Repair Cost</span>
+                          <span className="text-xs font-bold text-error font-mono">
+                            ₹{collision.cost.toLocaleString()} INR
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-tertiary block uppercase">Downtime</span>
+                          <span className="text-xs font-bold text-primary-container font-mono">
+                            {collision.downtime} Days
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-tertiary block uppercase">Root Cause</span>
+                          <span className="text-[10px] text-tertiary leading-tight line-clamp-2">{collision.rootCause}</span>
+                        </div>
+                      </div>
+                      <div className="mt-2 pt-1 border-t border-outline-variant/20 text-[9px] text-tertiary-container italic">
+                        Illustrative training cost. Real costs vary by machine.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <Viewport3D
               cameraPosition={[120, 100, 120]}
@@ -397,45 +445,6 @@ export function MissionView({ missionId, onBack, onNavigate }: MissionViewProps)
               className="bg-transparent"
               overlay={
                 <div className="absolute bottom-14 left-4 right-4 flex flex-col gap-3 pointer-events-none">
-                  {/* Damage Assessment Card */}
-                  {collision && (
-                    <Card className="p-4 bg-error-container/10 border-error/40 backdrop-blur-md shadow-2xl animate-slide-in-right pointer-events-auto">
-                      <div className="flex items-start gap-3">
-                        <div className="w-10 h-10 rounded bg-error/20 flex items-center justify-center text-error border border-error/40">
-                          <span className="material-symbols-outlined">fmd_bad</span>
-                        </div>
-                        <div className="flex-1">
-                          <h4 className="font-bold text-error text-sm uppercase">Damage Assessment</h4>
-                          <div className="grid grid-cols-2 gap-4 mt-2">
-                            <div>
-                              <span className="text-[9px] text-tertiary block uppercase">Part Damaged</span>
-                              <span className="text-xs font-bold text-on-surface">{collision.part}</span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-tertiary block uppercase">Repair Cost</span>
-                              <span className="text-xs font-bold text-error font-mono">
-                                ₹{collision.cost.toLocaleString()} INR
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-tertiary block uppercase">Downtime</span>
-                              <span className="text-xs font-bold text-primary-container font-mono">
-                                {collision.downtime} Days
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-[9px] text-tertiary block uppercase">Root Cause</span>
-                              <span className="text-[10px] text-tertiary leading-tight">{collision.rootCause}</span>
-                            </div>
-                          </div>
-                          <div className="mt-3 pt-2 border-t border-outline-variant/20 text-[9px] text-tertiary-container italic">
-                            Illustrative training cost. Real costs vary by machine.
-                          </div>
-                        </div>
-                      </div>
-                    </Card>
-                  )}
-
                   {/* Completion Card */}
                   {isPassed && (
                     <Card className="p-6 bg-secondary/10 border-secondary/40 backdrop-blur-md shadow-2xl animate-slide-in-right pointer-events-auto flex flex-col items-center text-center gap-3">
