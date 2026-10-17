@@ -149,7 +149,7 @@ export function Navigation({ currentTab, onSelectTab }: NavigationProps) {
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-secondary"></span>
               </span>
               <span className="font-label-sm text-label-sm text-tertiary font-mono tracking-tight whitespace-nowrap">
-                Shop Net: {currentController.label.split(' ')[0]} <span className="text-secondary font-bold">ONLINE</span>
+                Controller: {currentController.label.split(' ')[0]}
               </span>
             </div>
 

@@ -1,0 +1,58 @@
+# Design Changes: Shopfloor Agent Natural Replies and Multimodal
+
+This document records the approved design exceptions and UI updates applied to the Shopfloor Agent and related shell components.
+
+## Approved UI Changes and Rationale
+
+1. **Intent-based Message Rendering**
+   - **Change:** Model replies for intents `greeting`, `general`, `calculation`, and `gcode` render as standard chat bubbles styled identically to user bubbles (matching text typography, spacing, and bubble rounding), aligned to the left and styled with the existing model surface color (`bg-surface-container-low`). Rendered via `react-markdown`.
+   - **Rationale:** Prevents greetings, general questions, and code explanations from showing heavy, inappropriate diagnostic resolution layouts.
+   - **Removed / Modified Classes:** Removed fixed diagnostic wrapper classes when rendering plain chat bubbles.
+
+2. **Diagnostic Resolution Card Cleanup**
+   - **Change:** Removed the "Fault Confidence" box completely from the Diagnostic Resolution card. Populated the card from structured diagnostic fields (`alarmCode`, `alarmText`, `likelyCauses`, `steps`, `safetyNote`).
+   - **Rationale:** Complies with honesty rules prohibiting invented confidence percentages or fabricated telemetry scores.
+   - **Removed Classes:**
+     - `flex items-center gap-3 bg-surface-container-lowest px-4 py-2 rounded self-start md:self-auto flex-shrink-0` (Fault confidence container)
+     - `font-headline-lg text-headline-lg text-secondary font-bold font-mono` (Fault confidence percentage score)
+     - `font-label-sm text-label-sm text-tertiary font-mono border-l border-surface-container-high pl-3 leading-tight` (Fault confidence label)
+     - `bg-surface-container p-3.5 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3` (Header flex layout adjusted)
+     - `flex items-center gap-3 self-start md:self-auto flex-shrink-0` (Card actions flex container adjusted)
+     - `font-body-sm text-body-sm text-tertiary mt-0.5 max-w-lg prose prose-invert prose-xs` (Safety note block updated)
+     - `space-y-4 font-body-sm text-body-sm text-tertiary leading-relaxed prose prose-invert prose-sm max-w-none` (Diagnostic steps container updated)
+
+3. **Diagnostic Reasoning Chain Visibility**
+   - **Change:** Hidden by default; rendered only when real `toolCalls` are present and non-empty.
+   - **Rationale:** Prevents fabricated, static reasoning steps when no tool calls were executed.
+
+4. **Model Badge Verification**
+   - **Change:** Replaced static "MITSUBISHI VERIFIED" badge with `{n} SOURCES` badge displayed only when real grounding citations are present (`citations.length > 0`). Otherwise hidden.
+   - **Rationale:** Adheres to honesty rules preventing false verification claims without retrieved passages.
+
+5. **Header Physics Chip Removal**
+   - **Change:** Removed the "PHYSICS: High Precision" chip from the Shopfloor Agent header.
+   - **Rationale:** Removed ungrounded simulation status badge.
+   - **Removed Classes:**
+     - `inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-primary-container/10 text-primary font-label-sm text-label-sm font-mono`
+     - `w-2 h-2 rounded-full bg-secondary`
+
+6. **Composer Material Footer Removal**
+   - **Change:** Removed "Active Material: Inconel 718 (High-Temp Alloy)" from the composer footer strip.
+   - **Rationale:** Removed hard-coded material presumption in the chat composer.
+   - **Removed Classes:**
+     - `flex items-center gap-2 text-tertiary`
+     - `font-label-sm text-label-sm text-tertiary-container font-mono uppercase`
+     - `text-error font-mono text-[10px] uppercase hover:underline ml-2`
+
+7. **Shell Status Label Alignment (Approved Locked File Exceptions)**
+   - **Change in `src/components/Navigation.tsx`:** Changed "Shop Net: {controller} ONLINE" to "Controller: {controller}".
+   - **Change in `src/components/ui/AppShell.tsx`:** Removed "NODE ID: ..." text from footer.
+   - **Rationale:** Eliminates simulated network connectivity and artificial node ID strings.
+
+8. **Pendant Camera Modal and File Attachments**
+   - **Change:** Integrated camera modal utilizing `getUserMedia({ video: { facingMode: { ideal: "environment" } } })` with live preview, canvas capture, max 2048px JPEG compression at 0.85 quality, and fallback file input. Added hidden file input for image attachments (JPEG, PNG, WebP) with client-side thumbnail chips and remove button.
+   - **Rationale:** Enables shopfloor operators on desktop and mobile devices to upload control panel and workpiece photos directly into the diagnostic pipeline.
+
+9. **Voice Recording via MediaRecorder and Inline Transcription**
+   - **Change:** Replaced Web Speech API with `MediaRecorder` audio capture (supporting `audio/webm;codecs=opus`, `audio/mp4`, `audio/ogg`), active recording timer, and backend inline transcription via `POST /api/agent/transcribe` calling `MODEL_FLASH`.
+   - **Rationale:** Ensures reliable cross-browser audio input on desktop Chrome, Safari, and mobile Android.

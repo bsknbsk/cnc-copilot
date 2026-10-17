@@ -37,19 +37,19 @@ export function getFriendlyErrorMessage(language: string = 'en'): string {
 }
 
 /**
- * Execute a Gemini call with a 25-second timeout and 1 retry on 429 or 503 with a 2-second backoff.
+ * Execute a Gemini call with a 45-second timeout and 1 retry on 429, 503, or timeout with a 2-second backoff.
  */
 export async function executeWithRetry<T>(
   action: () => Promise<T>,
   language: string = 'en'
 ): Promise<T> {
-  const timeoutMs = 25000;
+  const timeoutMs = 45000;
 
   const runWithTimeout = async (): Promise<T> => {
     return Promise.race([
       action(),
       new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error('TIMEOUT_25S')), timeoutMs)
+        setTimeout(() => reject(new Error('TIMEOUT_45S')), timeoutMs)
       ),
     ]);
   };
@@ -58,8 +58,9 @@ export async function executeWithRetry<T>(
     return await runWithTimeout();
   } catch (err: any) {
     const status = err?.status || err?.statusCode || (err?.message?.includes('429') ? 429 : err?.message?.includes('503') ? 503 : 0);
-    if (status === 429 || status === 503) {
-      console.warn(`[Gemini] Retrying after ${status} with 2s backoff...`);
+    const isRetryable = status === 429 || status === 503 || err?.message?.includes('TIMEOUT');
+    if (isRetryable) {
+      console.warn(`[Gemini] Retrying after ${err?.message || status} with 2s backoff...`);
       await new Promise(r => setTimeout(r, 2000));
       try {
         return await runWithTimeout();

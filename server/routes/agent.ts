@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import multer from 'multer';
 import { adminDb, adminStorage } from '../firebase.js';
 import { MODEL_FLASH } from '../config.js';
 import { getGemini, executeWithRetry, getFriendlyErrorMessage } from '../geminiClient.js';
@@ -206,6 +207,50 @@ const toolDeclarations: FunctionDeclaration[] = [
   },
 ];
 
+const audioUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+});
+
+const agentResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    intent: {
+      type: Type.STRING,
+      enum: ['greeting', 'general', 'diagnosis', 'calculation', 'gcode'],
+    },
+    answerMarkdown: {
+      type: Type.STRING,
+    },
+    diagnosis: {
+      type: Type.OBJECT,
+      properties: {
+        alarmCode: {
+          type: Type.STRING,
+          nullable: true,
+        },
+        alarmText: {
+          type: Type.STRING,
+          nullable: true,
+        },
+        likelyCauses: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+        },
+        steps: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+        },
+        safetyNote: {
+          type: Type.STRING,
+          nullable: true,
+        },
+      },
+    },
+  },
+  required: ['intent', 'answerMarkdown'],
+};
+
 // 1. Diagnostic Chat endpoint
 agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Response) => {
   const startTime = Date.now();
@@ -234,16 +279,16 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
     }
 
     if (base64Data) {
-      const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+      const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
       if (!ALLOWED_MIME_TYPES.includes(mimeType.toLowerCase())) {
-        res.status(400).json({ error: 'invalid_image_type', message: 'Only JPEG, PNG, WEBP, and GIF images are allowed' });
+        res.status(400).json({ error: 'unsupported_image', message: 'Only JPEG, PNG, and WEBP images are allowed' });
         return;
       }
 
       const buffer = Buffer.from(base64Data, 'base64');
-      const MAX_IMAGE_SIZE = 15 * 1024 * 1024; // 15 MB
+      const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
       if (buffer.length > MAX_IMAGE_SIZE) {
-        res.status(400).json({ error: 'image_too_large', message: 'Image size exceeds 15 MB limit' });
+        res.status(400).json({ error: 'unsupported_image', message: 'Image size exceeds 5 MB limit' });
         return;
       }
 
@@ -265,220 +310,75 @@ agentRouter.post('/chat', requireAuth, rateLimitAI, async (req: Request, res: Re
     }
   }
 
-  const systemInstruction = `You are CNC Copilot's Senior Shopfloor Diagnostic AI, specialized in CNC machining centers, lathes, and mill-turns.
-Machine Controller: ${controller}
-Preferred Response Language: ${language}
-
-Rules:
-1. Never invent numbers, formulas, or fake data. Speed, feed, power, torque, MRR, and chip thickness calculations MUST be performed using calculate_cutting. Material recommendations MUST use get_material. G-code checks MUST use verify_gcode.
-2. Cite only retrieved passages and verified physics results.
-3. For resets and parameter changes, state the safety line first (e.g. Emergency Stop, circuit breaker lockout).
-4. Reply in the user's preferred language (${language}), but keep G-codes and alarm numbers unchanged in English/Latin script.
-5. Be concise and practical for shopfloor operators.`;
+  const systemInstruction = `You are CNC Copilot, a shopfloor assistant for CNC operators and manufacturing engineers on ${controller} controllers. Reply in ${language}; keep G-codes, alarm numbers and parameter numbers in original form.
+Decide the intent of the operator's message and answer in the matching style:
+- greeting or small talk: one or two friendly sentences, then one line offering help with alarms, cutting parameters, G-code or the Crash Lab. No headings, no lists.
+- general CNC question: a direct answer in plain markdown, short paragraphs or a short list, under 180 words unless asked for detail.
+- alarm or fault (an alarm number, an error text, a controller screen photo, or a described machine fault): a diagnosis.
+- cutting parameters, speeds, feeds, power: explain the numbers given by the calculation tool; never invent numbers.
+- G-code question: explain the code plainly.
+Never claim you checked manuals, registers, sensors or telemetry unless the retrieved passages are provided in this request. Never state a confidence score. When resetting alarms, changing parameters or bypassing interlocks is involved, start with a one-line safety warning.`;
 
   try {
     const ai = getGemini();
 
-    // Prepare contents for Step 1
-    const contents: any[] = [];
+    const parts: any[] = [];
     if (base64Data) {
-      contents.push({
-        role: 'user',
-        parts: [
-          {
-            inlineData: {
-              mimeType,
-              data: base64Data,
-            },
-          },
-          {
-            text: `The image shows a CNC controller screen. First read out the alarm number, alarm text, mode and any axis values you can see, then answer.\n\n${message || 'Analyze the controller screen.'}`,
-          },
-        ],
+      parts.push({
+        inlineData: {
+          mimeType,
+          data: base64Data,
+        },
+      });
+      parts.push({
+        text: `The image shows a CNC controller screen. First read out the alarm number, alarm text, mode and any axis values you can see, then answer.\n\n${message || 'Analyze the controller screen.'}`,
       });
     } else {
-      contents.push({
-        role: 'user',
-        parts: [{ text: message || 'Analyze the machine condition.' }],
+      parts.push({ text: message || 'Analyze the machine condition.' });
+    }
+
+    const response = await executeWithRetry(async () => {
+      return await ai.models.generateContent({
+        model: MODEL_FLASH,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: agentResponseSchema,
+        },
       });
-    }
+    }, language);
 
-    const toolCalls: Array<{ name: string; args: any; result: any }> = [];
-    let replyText = '';
+    let intent: 'greeting' | 'general' | 'diagnosis' | 'calculation' | 'gcode' = 'general';
+    let answerMarkdown = '';
+    let diagnosis: {
+      alarmCode: string | null;
+      alarmText: string | null;
+      likelyCauses: string[];
+      steps: string[];
+      safetyNote: string | null;
+    } | null = null;
 
-    // Step 1: Function calling loop (at most 3 times)
-    for (let turn = 0; turn < 3; turn++) {
-      const response = await executeWithRetry(async () => {
-        return await ai.models.generateContent({
-          model: MODEL_FLASH,
-          contents,
-          config: {
-            systemInstruction,
-            tools: [{ functionDeclarations: toolDeclarations }],
-          },
-        });
-      }, language);
-
-      const candidate = response.candidates?.[0];
-      if (!candidate?.content) break;
-
-      const parts = candidate.content.parts || [];
-      const functionCalls = parts.filter((p: any) => p.functionCall);
-
-      if (functionCalls.length === 0) {
-        const textPart = parts.find((p: any) => p.text);
-        if (textPart?.text) {
-          replyText = textPart.text;
-        }
-        break;
+    try {
+      const rawText = response.text || '';
+      const parsed = JSON.parse(rawText);
+      intent = parsed.intent || 'general';
+      answerMarkdown = parsed.answerMarkdown || rawText;
+      if (intent === 'diagnosis' && parsed.diagnosis) {
+        diagnosis = {
+          alarmCode: parsed.diagnosis.alarmCode ?? null,
+          alarmText: parsed.diagnosis.alarmText ?? null,
+          likelyCauses: Array.isArray(parsed.diagnosis.likelyCauses) ? parsed.diagnosis.likelyCauses : [],
+          steps: Array.isArray(parsed.diagnosis.steps) ? parsed.diagnosis.steps : [],
+          safetyNote: parsed.diagnosis.safetyNote ?? null,
+        };
       }
-
-      // Add model's turn to conversation history preserving thoughtSignature
-      contents.push(candidate.content);
-
-      // Execute each function call
-      const responseParts: any[] = [];
-      for (const fcPart of functionCalls) {
-        const fc = fcPart.functionCall;
-        if (!fc || !fc.name) continue;
-        let toolResult: any = {};
-        if (fc.name === 'calculate_cutting') {
-          toolResult = executeCalculateCutting(fc.args);
-        } else if (fc.name === 'get_material') {
-          toolResult = executeGetMaterial(fc.args);
-        } else if (fc.name === 'verify_gcode') {
-          toolResult = executeVerifyGCode(fc.args);
-        }
-
-        toolCalls.push({
-          name: fc.name,
-          args: fc.args,
-          result: toolResult,
-        });
-
-        responseParts.push({
-          functionResponse: {
-            name: fc.name,
-            id: fc.id,
-            response: toolResult,
-          },
-        });
-      }
-
-      // Add tool responses turn
-      contents.push({
-        role: 'user',
-        parts: responseParts,
-      });
+    } catch {
+      answerMarkdown = response.text || '';
     }
 
-    // Step 2: If question or image is about alarms, parameters, programming or maintenance, call MODEL_FLASH with File Search
-    const isManualQuery = Boolean(rawImage) || /\b(alarm|alm|parameter|param|error|fault|ex\d+|sv\d+|sp\d+|ps\d+|ot\d+|recovery|manual|troubleshoot|procedure|maintenance|interlock|overcurrent|overheat|overtravel|limit|reset)\b/i.test(message || '');
-
-    const citations: Array<{ documentName: string; pageNumber: number | null; snippet: string }> = [];
-
-    if (isManualQuery) {
-      const storeName = await getFileSearchStoreName();
-      if (storeName) {
-        const selectedCtrl = (controller || '').toLowerCase().includes('mitsubishi') || (controller || '').toLowerCase().includes('m80')
-          ? 'mitsubishi'
-          : (controller || '').toLowerCase().includes('fanuc')
-          ? 'fanuc'
-          : 'generic';
-
-        const metadataFilter = selectedCtrl === 'generic'
-          ? 'controller = "generic"'
-          : `controller = "${selectedCtrl}" OR controller = "generic"`;
-
-        const fsContents: any[] = [];
-        if (base64Data) {
-          fsContents.push({
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: base64Data,
-                },
-              },
-              {
-                text: `The image shows a CNC controller screen. First read out the alarm number, alarm text, mode and any axis values you can see, then answer.\n\n${message || 'Diagnose the controller alarm and recovery protocol.'}`,
-              },
-            ],
-          });
-        } else {
-          fsContents.push({
-            role: 'user',
-            parts: [{ text: message || 'Diagnose the controller alarm and recovery protocol.' }],
-          });
-        }
-
-        const fsSystemPrompt = `You are CNC Copilot's Senior Shopfloor Diagnostic AI, specialized in CNC machining centers, lathes, and mill-turns.
-Machine Controller: ${controller}
-Preferred Response Language: ${language}
-
-Rules:
-- Cite only retrieved passages from the uploaded manuals.
-- Safety line first for resets and parameter changes (e.g. Emergency Stop, circuit breaker lockout).
-- Provide a concise, step-by-step physical recovery protocol for the shopfloor operator.
-- Reply in the user's preferred language (${language}), but keep G-codes and alarm numbers unchanged in English/Latin script.
-- If the requested alarm or protocol is not in the manuals, provide general safe shopfloor advice.`;
-
-        try {
-          const fsRes = await executeWithRetry(async () => {
-            return await ai.models.generateContent({
-              model: MODEL_FLASH,
-              contents: fsContents,
-              config: {
-                systemInstruction: fsSystemPrompt,
-                tools: [{
-                  fileSearch: {
-                    fileSearchStoreNames: [storeName],
-                    metadataFilter,
-                  },
-                }],
-              },
-            });
-          }, language);
-
-          const fsCandidate = fsRes.candidates?.[0];
-          const grounding = fsCandidate?.groundingMetadata;
-          if (grounding?.groundingChunks && Array.isArray(grounding.groundingChunks)) {
-            for (const chunk of grounding.groundingChunks) {
-              if (chunk.retrievedContext) {
-                citations.push({
-                  documentName: chunk.retrievedContext.title || 'OEM Manual',
-                  pageNumber: chunk.retrievedContext.pageNumber ?? null,
-                  snippet: (chunk.retrievedContext.text || '').trim(),
-                });
-              }
-            }
-          }
-
-          const fsText = fsCandidate?.content?.parts?.[0]?.text || '';
-          if (fsText) {
-            if (citations.length === 0) {
-              replyText = `Not found in your uploaded manuals. General guidance:\n\n${fsText}`;
-            } else {
-              replyText = fsText;
-            }
-          }
-        } catch (fsErr: any) {
-          console.warn(JSON.stringify({ level: 'warn', route: 'POST /api/agent/chat:fileSearch', error: fsErr?.message || String(fsErr) }));
-        }
-      }
-    }
-
-    if (isManualQuery && citations.length === 0) {
-      if (!replyText.startsWith('Not found in your uploaded manuals.')) {
-        replyText = `Not found in your uploaded manuals. General guidance:\n\n${replyText}`;
-      }
-    }
-
-    if (!replyText) {
-      replyText = 'Diagnostic analysis complete. Verify machine interlocks and clear alarms.';
-    }
-
+    const citations: any[] = [];
+    const toolCalls: any[] = [];
     const latencyMs = Date.now() - startTime;
 
     logAIRequest({
@@ -486,8 +386,8 @@ Rules:
       uid: user.uid,
       controller,
       language,
-      toolNames: toolCalls.map(t => t.name),
-      citationCount: citations.length,
+      toolNames: [],
+      citationCount: 0,
       latencyMs,
       model: MODEL_FLASH,
     });
@@ -508,9 +408,11 @@ Rules:
         // 2. Add assistant message
         await userChatsRef.collection('messages').add({
           role: 'model',
-          text: replyText.slice(0, 20000),
-          citations: citations.length > 0 ? citations : null,
-          toolCalls: toolCalls.length > 0 ? toolCalls : null,
+          text: answerMarkdown.slice(0, 20000),
+          intent,
+          diagnosis: diagnosis || null,
+          citations: null,
+          toolCalls: null,
           createdAt: new Date().toISOString(),
         });
 
@@ -525,7 +427,7 @@ Rules:
         await adminDb.collection('users').doc(user.uid).collection('activity').add({
           type: 'chat',
           title: `Diagnostic: ${(message || controller).slice(0, 40)}`.slice(0, 120),
-          summary: replyText.slice(0, 300),
+          summary: answerMarkdown.slice(0, 300),
           link: chatId,
           createdAt: new Date().toISOString(),
         });
@@ -535,7 +437,9 @@ Rules:
     }
 
     res.json({
-      reply: replyText,
+      intent,
+      reply: answerMarkdown,
+      diagnosis,
       citations,
       toolCalls,
       latencyMs,
@@ -545,6 +449,70 @@ Rules:
     res.status(503).json({
       error: 'ai_unavailable',
       message: getFriendlyErrorMessage(language),
+    });
+  }
+});
+
+// 2. Transcribe voice audio endpoint
+agentRouter.post('/transcribe', requireAuth, rateLimitAI, audioUpload.single('audio'), async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const user = req.user!;
+  const file = req.file;
+
+  if (!file) {
+    res.status(400).json({ error: 'missing_audio', message: 'Audio file is required' });
+    return;
+  }
+
+  const rawMime = file.mimetype.split(';')[0].toLowerCase();
+  const ALLOWED_AUDIO_TYPES = ['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/wav', 'audio/x-wav'];
+  if (!ALLOWED_AUDIO_TYPES.includes(rawMime)) {
+    res.status(400).json({ error: 'unsupported_audio', message: 'Only audio/webm, audio/ogg, audio/mp4, and audio/wav are allowed' });
+    return;
+  }
+
+  try {
+    const ai = getGemini();
+    const effectiveMime = rawMime === 'audio/x-wav' ? 'audio/wav' : rawMime;
+    const response = await executeWithRetry(async () => {
+      return await ai.models.generateContent({
+        model: MODEL_FLASH,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: effectiveMime,
+                  data: file.buffer.toString('base64'),
+                },
+              },
+              {
+                text: "Transcribe this operator's spoken question exactly, in its original language and script. Return only the transcript.",
+              },
+            ],
+          },
+        ],
+      });
+    }, user.preferredLanguage || 'en');
+
+    const transcript = (response.text || '').trim();
+    const latencyMs = Date.now() - startTime;
+
+    logAIRequest({
+      route: '/api/agent/transcribe',
+      uid: user.uid,
+      language: user.preferredLanguage || 'en',
+      model: MODEL_FLASH,
+      latencyMs,
+    });
+
+    res.json({ transcript });
+  } catch (error: any) {
+    console.error(JSON.stringify({ route: 'POST /api/agent/transcribe', error: error?.message || String(error) }));
+    res.status(503).json({
+      error: 'transcribe_failed',
+      message: getFriendlyErrorMessage(user.preferredLanguage || 'en'),
     });
   }
 });

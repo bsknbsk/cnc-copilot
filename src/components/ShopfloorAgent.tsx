@@ -16,7 +16,7 @@ import {
   StatChip, 
   EmptyState 
 } from './ui/Headers.js';
-import { Card } from './ui/Layout.js';
+import { Card, GlassPanel } from './ui/Layout.js';
 import { Badge } from './ui/Badge.js';
 import { ButtonPrimary, ButtonSecondary, IconButton } from './ui/Button.js';
 import { Tabs, Skeleton, ProgressBar, Drawer } from './ui/Feedback.js';
@@ -34,6 +34,14 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
   imageUrl?: string | null;
+  intent?: 'greeting' | 'general' | 'diagnosis' | 'calculation' | 'gcode' | null;
+  diagnosis?: {
+    alarmCode: string | null;
+    alarmText: string | null;
+    likelyCauses: string[];
+    steps: string[];
+    safetyNote: string | null;
+  } | null;
   citations?: Array<{
     documentName: string;
     pageNumber?: number | null;
@@ -45,9 +53,9 @@ export interface ChatMessage {
     result: any;
   }> | null;
   createdAt?: string | null;
-  reasoning?: string | null; // For Diagnostic Reasoning Chain
-  confidence?: number | null; // For Confidence Metric
-  faultType?: string | null; // For Fault Type label
+  reasoning?: string | null;
+  confidence?: number | null;
+  faultType?: string | null;
   isError?: boolean;
   failedQuery?: string;
 }
@@ -81,7 +89,24 @@ export function ShopfloorAgent({
   const [inputText, setInputText] = useState<string>(initialQuery || '');
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [isSending, setIsSending] = useState<boolean>(false);
-  const [isListening, setIsListening] = useState<boolean>(false);
+  const [composerError, setComposerError] = useState<string | null>(null);
+
+  // Voice recording state (MediaRecorder)
+  const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'transcribing'>('idle');
+  const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+
+  // Camera modal state
+  const [isCameraOpen, setIsCameraOpen] = useState<boolean>(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [capturedFrame, setCapturedFrame] = useState<string | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraFallbackInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   
   const [activeController, setActiveController] = useState<string>(
     profile?.preferredController === 'mitsubishi'
@@ -105,6 +130,18 @@ export function ShopfloorAgent({
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
+      }
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+        cameraStreamRef.current = null;
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+      }
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
       }
     };
   }, []);
@@ -235,6 +272,8 @@ export function ShopfloorAgent({
             role: d.role === 'model' ? 'model' : 'user',
             text: d.text || '',
             imageUrl: d.imageUrl || null,
+            intent: d.intent || null,
+            diagnosis: d.diagnosis || null,
             citations: Array.isArray(d.citations) ? d.citations : null,
             toolCalls: Array.isArray(d.toolCalls) ? d.toolCalls : null,
             createdAt: d.createdAt || null,
@@ -319,39 +358,283 @@ export function ShopfloorAgent({
     }
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const processImageFile = (fileOrBlob: Blob | File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 2048;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject(new Error('Canvas context unavailable'));
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(fileOrBlob);
+    });
+  };
+
+  const getBase64ByteSize = (dataUrl: string): number => {
+    const base64 = dataUrl.split(',')[1] || '';
+    return Math.round((base64.length * 3) / 4);
+  };
+
+  const handleStartCamera = async () => {
+    setComposerError(null);
+    setCameraError(null);
+    setCapturedFrame(null);
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      cameraFallbackInputRef.current?.click();
+      return;
+    }
+
+    setIsCameraOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+      });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('[ShopfloorAgent] Camera access error:', err);
+      setCameraError('Camera blocked. Allow camera access in the browser address bar, then try again.');
+    }
+  };
+
+  const handleCapturePhoto = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    let width = video.videoWidth || 640;
+    let height = video.videoHeight || 480;
+    const maxDim = 2048;
+    if (width > maxDim || height > maxDim) {
+      if (width > height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, width, height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setCapturedFrame(dataUrl);
+  };
+
+  const handleRetakePhoto = () => {
+    setCapturedFrame(null);
+    if (cameraStreamRef.current && videoRef.current) {
+      videoRef.current.srcObject = cameraStreamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  };
+
+  const handleUsePhoto = () => {
+    if (capturedFrame) {
+      const byteSize = getBase64ByteSize(capturedFrame);
+      if (byteSize > 5 * 1024 * 1024) {
+        setComposerError('Image too large. Use a photo under 5 MB.');
+      } else {
+        setAttachedImage(capturedFrame);
+      }
+    }
+    handleCloseCamera();
+  };
+
+  const handleCloseCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => t.stop());
+      cameraStreamRef.current = null;
+    }
+    setIsCameraOpen(false);
+    setCapturedFrame(null);
+    setCameraError(null);
+  };
+
+  const handleCameraFallbackSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
+    try {
+      const resized = await processImageFile(file);
+      const size = getBase64ByteSize(resized);
+      if (size > 5 * 1024 * 1024) {
+        setComposerError('Image too large. Use a photo under 5 MB.');
+        return;
+      }
+      setAttachedImage(resized);
+    } catch (err) {
+      console.warn('[ShopfloorAgent] Fallback camera error:', err);
+    }
+  };
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAttachedImage(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+  const handleAttachmentSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setComposerError('Image too large. Use a photo under 5 MB.');
+      return;
+    }
+
+    try {
+      const resized = await processImageFile(file);
+      const size = getBase64ByteSize(resized);
+      if (size > 5 * 1024 * 1024) {
+        setComposerError('Image too large. Use a photo under 5 MB.');
+        return;
+      }
+      setComposerError(null);
+      setAttachedImage(resized);
+    } catch (err) {
+      console.warn('[ShopfloorAgent] Attachment error:', err);
+    }
+  };
+
+  const startRecording = async () => {
+    setComposerError(null);
+    const preferredTypes = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg'];
+    let chosenMime = '';
+    for (const t of preferredTypes) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) {
+        chosenMime = t;
+        break;
+      }
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+    } catch (err: any) {
+      console.warn('[ShopfloorAgent] Mic permission denied:', err);
+      setComposerError('Microphone blocked. Allow microphone access in the browser address bar, then try again.');
+      return;
+    }
+
+    try {
+      const recorder = chosenMime ? new MediaRecorder(stream, { mimeType: chosenMime }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((t) => t.stop());
+          micStreamRef.current = null;
+        }
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current);
+          recordingTimerRef.current = null;
+        }
+
+        const mimeTypeToUse = recorder.mimeType || chosenMime || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeTypeToUse });
+        if (audioBlob.size === 0) {
+          setRecordingState('idle');
+          return;
+        }
+
+        setRecordingState('transcribing');
+        try {
+          const formData = new FormData();
+          const ext = mimeTypeToUse.includes('mp4') ? 'mp4' : mimeTypeToUse.includes('ogg') ? 'ogg' : 'webm';
+          formData.append('audio', audioBlob, `speech.${ext}`);
+
+          const res = await apiFetch('/api/agent/transcribe', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!res.ok) {
+            throw new Error(`Transcription failed: ${res.status}`);
+          }
+          const data = await res.json();
+          if (data.transcript) {
+            setInputText((prev) => (prev ? `${prev} ${data.transcript}` : data.transcript));
+          }
+        } catch (err: any) {
+          console.warn('[ShopfloorAgent] Transcribe error:', err);
+        } finally {
+          setRecordingState('idle');
+          setRecordingSeconds(0);
+        }
+      };
+
+      recorder.start(250);
+      setRecordingState('recording');
+      setRecordingSeconds(0);
+
+      const startTime = Date.now();
+      recordingTimerRef.current = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        setRecordingSeconds(elapsed);
+        if (elapsed >= 60) {
+          stopRecording();
+        }
+      }, 500);
+    } catch (err: any) {
+      console.warn('[ShopfloorAgent] MediaRecorder error:', err);
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      setComposerError('Microphone blocked. Allow microphone access in the browser address bar, then try again.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
   };
 
   const handleToggleVoice = () => {
-    if (isListening) {
-      setIsListening(false);
-      return;
-    }
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.lang = profile?.preferredLanguage || 'en-US';
-      setIsListening(true);
-      recognition.onresult = (event: any) => {
-        const transcript = event.results[0]?.[0]?.transcript || '';
-        setInputText((prev) => (prev ? `${prev} ${transcript}` : transcript));
-        setIsListening(false);
-      };
-      recognition.onerror = () => setIsListening(false);
-      recognition.onend = () => setIsListening(false);
-      recognition.start();
-    } else {
-      setInputText((prev) => prev ? `${prev} [Voice Input Not Supported]` : 'Voice Input Not Supported');
+    if (recordingState === 'recording') {
+      stopRecording();
+    } else if (recordingState === 'idle') {
+      startRecording();
     }
   };
+
+  useEffect(() => {
+    if (initialCamera) {
+      handleStartCamera();
+    }
+  }, [initialCamera]);
 
   const handleSendMessage = async (textToSend?: string) => {
     const queryText = (textToSend || inputText).trim();
@@ -419,6 +702,8 @@ export function ShopfloorAgent({
           id: `resp-${Date.now()}`,
           role: 'model',
           text: data.reply || 'Diagnostic complete.',
+          intent: data.intent || null,
+          diagnosis: data.diagnosis || null,
           citations: data.citations || null,
           toolCalls: data.toolCalls || null,
           createdAt: new Date().toISOString(),
@@ -647,7 +932,6 @@ export function ShopfloorAgent({
                     </span>
                   </div>
                 </div>
-                <StatChip icon="psychology" label="Physics" value="High Precision" variant="secondary" />
               </div>
               <div className="flex items-center gap-2">
                 <ButtonSecondary onClick={() => {}} icon="picture_as_pdf" className="h-9 px-3">
@@ -713,9 +997,11 @@ export function ShopfloorAgent({
                       </span>
                       {msg.role === 'model' && (
                         <>
-                          <Badge variant="secondary">
-                            {activeController.split(' ')[0]} Verified
-                          </Badge>
+                          {msg.citations && msg.citations.length > 0 && (
+                            <Badge variant="secondary">
+                              {msg.citations.length} SOURCES
+                            </Badge>
+                          )}
                           {playingMessageId === msg.id ? (
                             <div className="w-7 h-7 rounded bg-surface-container flex items-center justify-center p-0.5 shadow-sm animate-pulse" title="Playing answer">
                               <div className="w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin" />
@@ -757,120 +1043,176 @@ export function ShopfloorAgent({
                         </div>
                       </>
                     ) : (
-                      <div className="w-full bg-surface-container-low p-5 sm:p-6 rounded-2xl rounded-tl-none space-y-4 shadow-xl">
-                        {/* Root Cause Probability Metric Card */}
-                        <div className="bg-surface-container p-3.5 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3">
-                          <div className="flex items-start gap-3">
-                            <span className="material-symbols-outlined text-primary text-[28px] mt-0.5">error_outline</span>
-                            <div>
-                              <h4 className="font-headline-sm text-headline-sm text-on-surface font-semibold">{msg.isError ? 'Diagnostic Interlock' : 'Diagnostic Resolution'}</h4>
-                              <div className="font-body-sm text-body-sm text-tertiary mt-0.5 max-w-lg prose prose-invert prose-xs">
-                                <Markdown>{msg.text.split('### 1.')[0] || msg.text}</Markdown>
+                      (() => {
+                        const isDiagnosis = msg.intent === 'diagnosis' || Boolean(msg.diagnosis) || Boolean(msg.isError);
+                        if (!isDiagnosis) {
+                          return (
+                            <div className="bg-surface-container-low text-on-surface p-4 rounded-2xl rounded-tl-none text-body-md shadow-md max-w-2xl space-y-3">
+                              <div className="leading-relaxed prose prose-invert prose-sm max-w-none">
+                                <Markdown>{msg.text}</Markdown>
                               </div>
-                            </div>
-                          </div>
-                          {msg.isError ? (
-                            <div className="flex items-center gap-3 self-start md:self-auto flex-shrink-0">
-                              <ButtonSecondary onClick={() => handleSendMessage(msg.failedQuery)} icon="refresh" className="h-9 px-3">
-                                Retry
-                              </ButtonSecondary>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-3 bg-surface-container-lowest px-4 py-2 rounded self-start md:self-auto flex-shrink-0">
-                              <div className="flex flex-col">
-                                <span className="font-label-sm text-label-sm text-tertiary-container font-mono uppercase">Fault Confidence</span>
-                                <span className="font-headline-lg text-headline-lg text-secondary font-bold font-mono">{msg.confidence != null ? `${msg.confidence}%` : 'N/A'}</span>
-                              </div>
-                              <span className="font-label-sm text-label-sm text-tertiary font-mono border-l border-surface-container-high pl-3 leading-tight">
-                                {msg.faultType?.split(' ').map((word, i) => <React.Fragment key={i}>{word}<br/></React.Fragment>) || <>Kinematic<br/>Observation</>}
-                              </span>
-                            </div>
-                          )}
-                        </div>
 
-                        {/* Remainder of markdown if any */}
-                        {!msg.isError && msg.text.includes('### 1.') && (
-                          <div className="space-y-4 font-body-sm text-body-sm text-tertiary leading-relaxed prose prose-invert prose-sm max-w-none">
-                            <Markdown>{'### 1.' + msg.text.split('### 1.')[1].split('Verified Citations:')[0]}</Markdown>
-                          </div>
-                        )}
-
-                        {/* Citations */}
-                        {msg.citations && msg.citations.length > 0 && (
-                          <div className="pt-2 flex flex-wrap items-center gap-2">
-                            <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
-                            {msg.citations.map((c, i) => (
-                              <button
-                                key={i}
-                                type="button"
-                                onClick={() => setSelectedCitation(c)}
-                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
-                              >
-                                <span className="material-symbols-outlined text-[14px]">menu_book</span>
-                                {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
-                              </button>
-                            ))}
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-primary-container/10 text-primary font-label-sm text-label-sm font-mono">
-                              <span className="material-symbols-outlined text-[14px]">functions</span>
-                              Kinematic Physics Model
-                            </span>
-                          </div>
-                        )}
-
-                        {/* Collapsible How I got this row */}
-                        {msg.toolCalls && msg.toolCalls.length > 0 && (
-                          <details className="group bg-surface-container-lowest rounded-lg p-3 transition-all [&_summary::-webkit-details-marker]:hidden">
-                            <summary className="flex items-center justify-between cursor-pointer select-none text-tertiary hover:text-on-surface">
-                              <div className="flex items-center gap-2 font-label-sm text-label-sm font-mono uppercase text-secondary">
-                                <span className="material-symbols-outlined text-[16px] group-open:rotate-90 transition-transform">terminal</span>
-                                <span>How I got this ({msg.toolCalls.length})</span>
-                              </div>
-                              <span className="material-symbols-outlined text-[16px] group-open:rotate-180 transition-transform">expand_more</span>
-                            </summary>
-                            <div className="mt-3 pt-3 border-t border-surface-container font-mono text-body-sm text-tertiary space-y-2 leading-relaxed">
-                              {msg.toolCalls.map((tc, idx) => (
-                                <div key={idx} className="p-2 rounded bg-surface-container text-secondary text-label-sm">
-                                  <div className="font-bold text-on-surface flex items-center gap-1.5">
-                                    <span className="material-symbols-outlined text-[14px]">functions</span>
-                                    <span>{tc.name}</span>
-                                  </div>
-                                  <div className="mt-1 text-[11px] text-tertiary font-mono">
-                                    <strong>Args:</strong> {JSON.stringify(tc.args)}
-                                  </div>
-                                  <div className="mt-1 text-[11px] text-on-surface font-mono">
-                                    <strong>Result:</strong> {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result)}
-                                  </div>
+                              {msg.citations && msg.citations.length > 0 && (
+                                <div className="pt-2 flex flex-wrap items-center gap-2">
+                                  <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
+                                  {msg.citations.map((c, i) => (
+                                    <button
+                                      key={i}
+                                      type="button"
+                                      onClick={() => setSelectedCitation(c)}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
+                                    >
+                                      <span className="material-symbols-outlined text-[14px]">menu_book</span>
+                                      {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
+                                    </button>
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
-                          </details>
-                        )}
+                              )}
 
-                        {/* Physics Diagnostic Reasoning Chain (Interactive Details) */}
-                        <details className="group bg-surface-container-lowest rounded-lg p-3 transition-all [&_summary::-webkit-details-marker]:hidden">
-                          <summary className="flex items-center justify-between cursor-pointer select-none text-tertiary hover:text-on-surface">
-                            <div className="flex items-center gap-2 font-label-sm text-label-sm font-mono uppercase text-secondary">
-                              <span className="material-symbols-outlined text-[16px] group-open:rotate-90 transition-transform">terminal</span>
-                              <span>Diagnostic Reasoning Chain</span>
+                              {msg.toolCalls && msg.toolCalls.length > 0 && (
+                                <details className="group bg-surface-container-lowest rounded-lg p-3 transition-all [&_summary::-webkit-details-marker]:hidden">
+                                  <summary className="flex items-center justify-between cursor-pointer select-none text-tertiary hover:text-on-surface">
+                                    <div className="flex items-center gap-2 font-label-sm text-label-sm font-mono uppercase text-secondary">
+                                      <span className="material-symbols-outlined text-[16px] group-open:rotate-90 transition-transform">terminal</span>
+                                      <span>Diagnostic Reasoning Chain ({msg.toolCalls.length})</span>
+                                    </div>
+                                    <span className="material-symbols-outlined text-[16px] group-open:rotate-180 transition-transform">expand_more</span>
+                                  </summary>
+                                  <div className="mt-3 pt-3 border-t border-surface-container font-mono text-body-sm text-tertiary space-y-2 leading-relaxed">
+                                    {msg.toolCalls.map((tc, idx) => (
+                                      <div key={idx} className="p-2 rounded bg-surface-container text-secondary text-label-sm">
+                                        <div className="font-bold text-on-surface flex items-center gap-1.5">
+                                          <span className="material-symbols-outlined text-[14px]">functions</span>
+                                          <span>{tc.name}</span>
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-tertiary font-mono">
+                                          <strong>Args:</strong> {JSON.stringify(tc.args)}
+                                        </div>
+                                        <div className="mt-1 text-[11px] text-on-surface font-mono">
+                                          <strong>Result:</strong> {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result)}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              )}
                             </div>
-                            <span className="material-symbols-outlined text-[16px] group-open:rotate-180 transition-transform">expand_more</span>
-                          </summary>
-                          <div className="mt-3 pt-3 border-t border-surface-container font-mono text-body-sm text-tertiary space-y-2 leading-relaxed">
-                            {msg.reasoning ? (
-                              <Markdown>{msg.reasoning}</Markdown>
-                            ) : (
-                              <>
-                                <p>1. Analyzing multimodal input for {activeController} signature patterns.</p>
-                                <p>2. Cross-referencing alarm registers with OEM maintenance manuals.</p>
-                                <p>3. Computed decel inertia at timestamp: {msg.createdAt ? new Date(msg.createdAt).toLocaleTimeString() : 'Current'}.</p>
-                                <div className="p-2 rounded bg-surface-container text-secondary text-label-sm">
-                                  Conclusion: Anomaly signature matches standard {activeController} interlock protocol. No hardware damage suspected.
+                          );
+                        }
+
+                        return (
+                          <div className="w-full bg-surface-container-low p-5 sm:p-6 rounded-2xl rounded-tl-none space-y-4 shadow-xl">
+                            {/* Diagnostic Resolution Header & Content */}
+                            <div className="bg-surface-container p-3.5 rounded-lg flex flex-col md:flex-row md:items-start justify-between gap-3">
+                              <div className="flex items-start gap-3 flex-1">
+                                <span className="material-symbols-outlined text-primary text-[28px] mt-0.5">error_outline</span>
+                                <div className="space-y-3 flex-1">
+                                  <div>
+                                    <h4 className="font-headline-sm text-headline-sm text-on-surface font-semibold">
+                                      {msg.isError ? 'Diagnostic Interlock' : 'Diagnostic Resolution'}
+                                    </h4>
+                                    {msg.diagnosis?.alarmCode && (
+                                      <div className="font-mono text-body-sm font-bold text-secondary mt-0.5">
+                                        {msg.diagnosis.alarmCode}{msg.diagnosis.alarmText ? `: ${msg.diagnosis.alarmText}` : ''}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {msg.diagnosis?.safetyNote && (
+                                    <div className="p-2.5 rounded bg-error-container/20 border border-error/30 text-error text-body-sm flex items-start gap-2">
+                                      <span className="material-symbols-outlined text-[18px] flex-shrink-0">warning</span>
+                                      <span>{msg.diagnosis.safetyNote}</span>
+                                    </div>
+                                  )}
+
+                                  {msg.diagnosis?.likelyCauses && msg.diagnosis.likelyCauses.length > 0 && (
+                                    <div className="space-y-1 font-body-sm text-body-sm">
+                                      <span className="font-label-sm text-label-sm uppercase font-mono text-tertiary">Likely Causes:</span>
+                                      <ul className="list-disc list-inside space-y-1 text-tertiary">
+                                        {msg.diagnosis.likelyCauses.map((cause, idx) => (
+                                          <li key={idx}>{cause}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {msg.diagnosis?.steps && msg.diagnosis.steps.length > 0 && (
+                                    <div className="space-y-1 font-body-sm text-body-sm">
+                                      <span className="font-label-sm text-label-sm uppercase font-mono text-tertiary">Resolution Steps:</span>
+                                      <ol className="list-decimal list-inside space-y-1 text-tertiary">
+                                        {msg.diagnosis.steps.map((step, idx) => (
+                                          <li key={idx}>{step}</li>
+                                        ))}
+                                      </ol>
+                                    </div>
+                                  )}
+
+                                  {!msg.diagnosis && (
+                                    <div className="font-body-sm text-body-sm text-tertiary mt-0.5 prose prose-invert prose-xs">
+                                      <Markdown>{msg.text}</Markdown>
+                                    </div>
+                                  )}
                                 </div>
-                              </>
+                              </div>
+
+                              {msg.isError && (
+                                <div className="flex items-center gap-3 self-start flex-shrink-0">
+                                  <ButtonSecondary onClick={() => handleSendMessage(msg.failedQuery)} icon="refresh" className="h-9 px-3">
+                                    Retry
+                                  </ButtonSecondary>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Citations */}
+                            {msg.citations && msg.citations.length > 0 && (
+                              <div className="pt-2 flex flex-wrap items-center gap-2">
+                                <span className="text-tertiary-container font-label-sm text-label-sm uppercase font-mono mr-1">Verified Citations:</span>
+                                {msg.citations.map((c, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => setSelectedCitation(c)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 text-secondary font-label-sm text-label-sm font-mono"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">menu_book</span>
+                                    {c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Diagnostic Reasoning Chain - ONLY when toolCalls is non-empty */}
+                            {msg.toolCalls && msg.toolCalls.length > 0 && (
+                              <details className="group bg-surface-container-lowest rounded-lg p-3 transition-all [&_summary::-webkit-details-marker]:hidden">
+                                <summary className="flex items-center justify-between cursor-pointer select-none text-tertiary hover:text-on-surface">
+                                  <div className="flex items-center gap-2 font-label-sm text-label-sm font-mono uppercase text-secondary">
+                                    <span className="material-symbols-outlined text-[16px] group-open:rotate-90 transition-transform">terminal</span>
+                                    <span>Diagnostic Reasoning Chain ({msg.toolCalls.length})</span>
+                                  </div>
+                                  <span className="material-symbols-outlined text-[16px] group-open:rotate-180 transition-transform">expand_more</span>
+                                </summary>
+                                <div className="mt-3 pt-3 border-t border-surface-container font-mono text-body-sm text-tertiary space-y-2 leading-relaxed">
+                                  {msg.toolCalls.map((tc, idx) => (
+                                    <div key={idx} className="p-2 rounded bg-surface-container text-secondary text-label-sm">
+                                      <div className="font-bold text-on-surface flex items-center gap-1.5">
+                                        <span className="material-symbols-outlined text-[14px]">functions</span>
+                                        <span>{tc.name}</span>
+                                      </div>
+                                      <div className="mt-1 text-[11px] text-tertiary font-mono">
+                                        <strong>Args:</strong> {JSON.stringify(tc.args)}
+                                      </div>
+                                      <div className="mt-1 text-[11px] text-on-surface font-mono">
+                                        <strong>Result:</strong> {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
                             )}
                           </div>
-                        </details>
-                      </div>
+                        );
+                      })()
                     )}
                   </div>
                 ))
@@ -912,12 +1254,36 @@ export function ShopfloorAgent({
                   rows={2}
                 ></textarea>
                 
+                {attachedImage && (
+                  <div className="flex items-center gap-2 p-1.5 pl-2 pr-1 rounded-lg bg-surface-container border border-outline-variant/30 w-fit">
+                    <img src={attachedImage} alt="Attachment thumbnail" className="w-10 h-10 object-cover rounded" />
+                    <span className="font-mono text-label-sm text-tertiary">Image attached</span>
+                    <IconButton
+                      icon="close"
+                      title="Remove image"
+                      onClick={() => setAttachedImage(null)}
+                      className="w-7 h-7 min-w-0 min-h-0 text-tertiary hover:text-error"
+                    />
+                  </div>
+                )}
+                {composerError && (
+                  <div className="p-2.5 rounded bg-error-container/20 border border-error/30 text-error text-body-sm flex items-center justify-between gap-2">
+                    <span>{composerError}</span>
+                    <IconButton
+                      icon="close"
+                      title="Dismiss error"
+                      onClick={() => setComposerError(null)}
+                      className="w-6 h-6 min-w-0 min-h-0 text-error"
+                    />
+                  </div>
+                )}
+
                 {/* Input Toolbar */}
                 <div className="flex items-center justify-between pt-1">
                   <div className="flex items-center gap-1 sm:gap-2">
-                    {/* Camera Upload */}
+                    {/* Camera */}
                     <button 
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={handleStartCamera}
                       className={`h-10 w-10 sm:h-11 sm:w-11 rounded-lg ${attachedImage ? 'bg-primary/20 text-primary' : 'bg-surface-container text-tertiary'} hover:bg-surface-container-high hover:text-on-surface flex items-center justify-center transition-colors relative`} 
                       title="Capture / Upload Photo" 
                       type="button"
@@ -925,36 +1291,46 @@ export function ShopfloorAgent({
                       <span className="material-symbols-outlined text-[20px]">photo_camera</span>
                       {attachedImage && <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-primary"></div>}
                     </button>
-                    <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageSelect} />
+                    <input ref={cameraFallbackInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCameraFallbackSelect} />
 
                     {/* Push to Talk Mic */}
                     <button 
                       onClick={handleToggleVoice}
-                      className={`h-10 px-3 sm:px-4 rounded-lg bg-surface-container hover:bg-surface-container-high ${isListening ? 'text-error animate-pulse' : 'text-primary'} flex items-center gap-2 transition-all group relative overflow-hidden`} 
+                      disabled={recordingState === 'transcribing'}
+                      className={`h-10 px-3 sm:px-4 rounded-lg bg-surface-container hover:bg-surface-container-high ${recordingState === 'recording' ? 'text-error' : 'text-primary'} flex items-center gap-2 transition-all group relative overflow-hidden`} 
                       title="Voice Agent" 
                       type="button"
                     >
                       <span className="relative flex h-2.5 w-2.5">
-                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isListening ? 'bg-error' : 'bg-primary'} opacity-75`}></span>
-                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isListening ? 'bg-error' : 'bg-primary'}`}></span>
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${recordingState === 'recording' ? 'bg-error' : 'bg-primary'} opacity-75`}></span>
+                        <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${recordingState === 'recording' ? 'bg-error' : 'bg-primary'}`}></span>
                       </span>
-                      <span className="material-symbols-outlined text-[20px]">{isListening ? 'mic' : 'mic_none'}</span>
-                      <span className="font-label-sm text-label-sm font-mono uppercase tracking-tight hidden sm:inline">{isListening ? 'Listening...' : 'Voice Agent'}</span>
+                      <span className="material-symbols-outlined text-[20px]">{recordingState === 'recording' ? 'mic' : 'mic_none'}</span>
+                      <span className="font-label-sm text-label-sm font-mono uppercase tracking-tight hidden sm:inline">
+                        {recordingState === 'recording'
+                          ? `LISTENING 0:${recordingSeconds < 10 ? '0' : ''}${recordingSeconds}`
+                          : recordingState === 'transcribing'
+                          ? 'TRANSCRIBING...'
+                          : 'VOICE AGENT'}
+                      </span>
                     </button>
 
-                    {/* Attachment (Dummy for now) */}
-                    <button className="h-10 w-10 sm:h-11 sm:w-11 rounded-lg bg-surface-container hover:bg-surface-container-high text-tertiary hover:text-on-surface flex items-center justify-center transition-colors" title="Attach G-Code or Log" type="button">
+                    {/* Attachment Paperclip */}
+                    <button
+                      onClick={() => attachmentInputRef.current?.click()}
+                      className="h-10 w-10 sm:h-11 sm:w-11 rounded-lg bg-surface-container hover:bg-surface-container-high text-tertiary hover:text-on-surface flex items-center justify-center transition-colors"
+                      title="Attach photo"
+                      type="button"
+                    >
                       <span className="material-symbols-outlined text-[20px]">attach_file</span>
                     </button>
-                    
-                    {attachedImage && (
-                      <button 
-                        onClick={() => setAttachedImage(null)}
-                        className="text-error font-mono text-[10px] uppercase hover:underline ml-2"
-                      >
-                        Clear Snap
-                      </button>
-                    )}
+                    <input
+                      ref={attachmentInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={handleAttachmentSelect}
+                    />
                   </div>
 
                   {/* Send Action Button */}
@@ -974,15 +1350,69 @@ export function ShopfloorAgent({
                   <span className="hidden sm:inline">•</span>
                   <span className="hidden sm:inline">[Shift + Enter] Line Break</span>
                 </div>
-                <div className="flex items-center gap-2 text-tertiary">
-                  <span className="w-2 h-2 rounded-full bg-secondary"></span>
-                  <span>Active Material: <strong className="text-on-surface font-semibold">Inconel 718</strong> (High-Temp Alloy)</span>
-                </div>
               </div>
             </footer>
           </section>
         </div>
       </div>
+
+      {/* Pendant Camera Modal */}
+      {isCameraOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <GlassPanel className="w-full max-w-xl p-6 flex flex-col gap-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-surface-container pb-3">
+              <h3 className="font-headline-sm text-headline-sm text-on-surface font-semibold flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[24px]">photo_camera</span>
+                <span>Pendant Camera</span>
+              </h3>
+              <IconButton icon="close" title="Close" onClick={handleCloseCamera} className="w-8 h-8 min-w-0 min-h-0" />
+            </div>
+
+            {cameraError ? (
+              <div className="flex flex-col gap-4 py-4">
+                <div className="p-3 rounded bg-error-container/20 border border-error/30 text-error text-body-sm flex items-start gap-2">
+                  <span className="material-symbols-outlined text-[18px] flex-shrink-0">error</span>
+                  <span>{cameraError}</span>
+                </div>
+                <div className="flex justify-end">
+                  <ButtonSecondary onClick={handleCloseCamera}>Cancel</ButtonSecondary>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="w-full bg-black rounded-lg overflow-hidden flex items-center justify-center min-h-[260px] max-h-[50vh] relative">
+                  {capturedFrame ? (
+                    <img src={capturedFrame} alt="Captured preview" className="w-full h-full object-contain" />
+                  ) : (
+                    <video
+                      ref={videoRef}
+                      playsInline
+                      autoPlay
+                      muted
+                      className="w-full h-full object-contain"
+                    />
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  {!capturedFrame ? (
+                    <>
+                      <ButtonSecondary onClick={handleCloseCamera}>Cancel</ButtonSecondary>
+                      <ButtonPrimary onClick={handleCapturePhoto} icon="camera">Capture</ButtonPrimary>
+                    </>
+                  ) : (
+                    <>
+                      <ButtonSecondary onClick={handleRetakePhoto} icon="refresh">Retake</ButtonSecondary>
+                      <ButtonPrimary onClick={handleUsePhoto} icon="check">Use photo</ButtonPrimary>
+                      <ButtonSecondary onClick={handleCloseCamera}>Cancel</ButtonSecondary>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </GlassPanel>
+        </div>
+      )}
 
       {/* Citation Inspection Drawer */}
       <Drawer

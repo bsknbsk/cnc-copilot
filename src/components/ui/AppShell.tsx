@@ -23,8 +23,6 @@ export function AppShell({ children, currentTab, onNavigate }: AppShellProps) {
         <div className="w-full px-margin py-space-md flex items-center justify-between gap-space-sm font-label-sm text-label-sm text-tertiary">
           <div className="flex items-center gap-space-sm font-mono">
             <span>CNC COPILOT INDUSTRIAL TELEMETRY</span>
-            <span className="text-outline-variant">|</span>
-            <span>NODE ID: {user?.uid?.slice(0, 8).toUpperCase() || 'ANONYMOUS'}</span>
           </div>
           <div className="flex items-center gap-space-md font-mono">
             <span>CORE STATUS: {user ? 'SYNCED' : 'LOCAL'}</span>

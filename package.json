@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run tests/",
+    "test:e2e": "playwright test",
+    "test:e2e:live": "BASE_URL=https://cnc-copilot-857267445589.asia-south1.run.app playwright test",
     "guard:design": "node scripts/design-guard.mjs",
     "guard:design:write": "node scripts/design-guard.mjs --write"
   },
@@ -34,6 +36,7 @@
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/express": "^4.17.21",
     "@types/multer": "^2.3.0",
     "@types/node": "^22.14.0",

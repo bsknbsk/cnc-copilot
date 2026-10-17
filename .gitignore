@@ -11,3 +11,6 @@ coverage/
 *.pdf
 service-account*.json
 *-key.json
+e2e/.auth/
+test-results/
+playwright-report/

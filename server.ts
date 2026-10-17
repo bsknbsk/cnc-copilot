@@ -20,6 +20,7 @@ async function startServer() {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://aistudio.google.com;");
+    res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self)');
 
     const origin = req.headers.origin;
     if (origin && CORS_ALLOWLIST.includes(origin)) {
