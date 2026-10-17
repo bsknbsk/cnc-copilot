@@ -81,7 +81,7 @@ export function CuttingCalculator() {
       flutes: process === 'milling' ? flutes : 1,
       vc,
       feed: process === 'tapping' ? pitch : feed,
-      ap: process === 'milling' || process === 'turning' || process === 'boring' ? ap : undefined,
+      ap: process === 'milling' || process === 'boring' ? ap : undefined,
       ae: process === 'milling' ? ae : undefined,
       depth: holeDepth,
       machineMaxKw,
@@ -155,8 +155,7 @@ export function CuttingCalculator() {
         {/* Header & Process Tabs */}
         <section className="w-full mb-space-lg">
           <PageHeader
-            label="Kinematic Engine: Kienzle Force V4.2"
-            title="Cutting Physics Calculator"
+            title="Machining Calculator"
             caption="Optimize spindle RPM, chip load (fz), and cutting power with real-time physics."
             actions={
               <Tabs
@@ -164,14 +163,12 @@ export function CuttingCalculator() {
                 onTabChange={(id) => {
                   setProcess(id as ProcessType);
                   if (id === 'milling') setFeed(0.08);
-                  if (id === 'turning') setFeed(0.15);
                   if (id === 'drilling') setFeed(0.12);
                   if (id === 'tapping') { setPitch(1.5); setDiameter(10.0); }
                   if (id === 'boring') setFeed(0.12);
                 }}
                 tabs={[
                   { id: 'milling', label: 'Milling', icon: 'engineering' },
-                  { id: 'turning', label: 'Turning', icon: 'rotate_right' },
                   { id: 'drilling', label: 'Drilling', icon: 'arrow_downward' },
                   { id: 'tapping', label: 'Tapping', icon: 'build' },
                   { id: 'boring', label: 'Boring', icon: 'trip_origin' },
@@ -181,10 +178,10 @@ export function CuttingCalculator() {
           />
         </section>
 
-        {/* Main Split Pane Layout (5 cols left, 7 cols right) */}
+        {/* Main Split Pane Layout (4 cols left, 8 cols right) */}
         <div className="w-full grid grid-cols-1 xl:grid-cols-12 gap-space-lg items-start">
           {/* Left Inputs Panel */}
-          <Card className="xl:col-span-5 p-space-lg flex flex-col gap-space-md">
+          <Card className="xl:col-span-4 p-space-lg flex flex-col gap-space-md">
             {/* Units Toggle & Header */}
             <div className="flex items-center justify-between pb-space-xs">
               <SectionHeader title="Tool & Cut Geometry" className="border-b-0 mb-0 pb-0" />
@@ -603,107 +600,112 @@ export function CuttingCalculator() {
             </ButtonPrimary>
           </Card>
 
-          {/* Right Results Panel (7 cols of 12) */}
-          <div className="xl:col-span-7 flex flex-col gap-space-lg">
-            {/* 3D Tool Contact & Chip Geometry Viewport */}
-            <Calculator3DView
-              rpm={results.rpm}
-              feedRate={results.feedRate}
-              diameter={diameter}
-              process={process}
-              powerZone={results.powerZone}
-              tangentialForce={results.tangentialForce}
-            />
-
-            {/* Core Physics Metrics Grid (2x2) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-space-md">
-              {/* Metric Card 1: Spindle Speed (n) */}
-              <Card className="p-space-md flex flex-col justify-between">
-                <SectionHeader 
-                  title="Spindle Speed (n)" 
-                  actions={<Badge variant="secondary">{Math.round((results.rpm / maxSpindleRpm) * 100)}% Cap</Badge>}
-                  className="border-b-0 mb-0 pb-0"
+          {/* Right Results Panel (8 cols of 12) */}
+          <div className="xl:col-span-8 flex flex-col gap-space-lg">
+            {/* Simulation and Vertical Metrics Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-space-md items-stretch">
+              {/* 3D Tool Contact & Chip Geometry Viewport (Enlarged width & height) */}
+              <div className="lg:col-span-7 xl:col-span-8 flex flex-col">
+                <Calculator3DView
+                  rpm={results.rpm}
+                  feedRate={results.feedRate}
+                  diameter={diameter}
+                  process={process}
+                  powerZone={results.powerZone}
+                  tangentialForce={results.tangentialForce}
                 />
-                <div className="flex items-baseline gap-space-xs my-space-xs">
-                  <span className="font-code-lg text-[32px] leading-none font-bold text-on-surface tracking-tight">
-                    {results.rpm.toLocaleString()}
-                  </span>
-                  <span className="font-label-md text-label-md font-mono text-tertiary">RPM</span>
-                </div>
-                <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
-                  <span>Vc = {vc} m/min • Dc = {diameter}mm</span>
-                  <span className="text-secondary font-semibold">
-                    {results.rpm > maxSpindleRpm ? 'EXCEEDS CAPACITY' : 'Axis Safe'}
-                  </span>
-                </div>
-              </Card>
+              </div>
 
-              {/* Metric Card 2: Feed Rate (Vf) */}
-              <Card className="p-space-md flex flex-col justify-between">
-                <SectionHeader 
-                  title="Feed Rate (Vf)" 
-                  actions={<Badge variant="tertiary">h: {results.chipThickness}mm</Badge>}
-                  className="border-b-0 mb-0 pb-0"
-                />
-                <div className="flex items-baseline gap-space-xs my-space-xs">
-                  <span className="font-code-lg text-[32px] leading-none font-bold text-on-surface tracking-tight">
-                    {isMetric ? results.feedRate.toLocaleString() : (results.feedRate / 25.4).toFixed(1)}
-                  </span>
-                  <span className="font-label-md text-label-md font-mono text-tertiary">
-                    {isMetric ? 'mm/min' : 'IPM'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
-                  <span>{process === 'milling' ? `z = ${flutes} teeth` : `Single edge`} • {(results.feedRate / 60).toFixed(1)} mm/s</span>
-                  <span className="text-on-surface">Axis Limit Safe</span>
-                </div>
-              </Card>
+              {/* Core Physics Metrics - Vertically in Sequence (Top to Bottom) */}
+              <div className="lg:col-span-5 xl:col-span-4 flex flex-col gap-space-sm justify-between">
+                {/* 1. Spindle Speed (n) */}
+                <Card className="p-space-md flex flex-col justify-between flex-1">
+                  <SectionHeader 
+                    title="Spindle Speed (n)" 
+                    actions={<Badge variant="secondary">{Math.round((results.rpm / maxSpindleRpm) * 100)}% Cap</Badge>}
+                    className="border-b-0 mb-0 pb-0"
+                  />
+                  <div className="flex items-baseline gap-space-xs my-space-xs">
+                    <span className="font-code-lg text-[26px] xl:text-[32px] leading-none font-bold text-on-surface tracking-tight">
+                      {results.rpm.toLocaleString()}
+                    </span>
+                    <span className="font-label-md text-label-md font-mono text-tertiary">RPM</span>
+                  </div>
+                  <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
+                    <span>Vc = {vc} m/min • Dc = {diameter}mm</span>
+                    <span className="text-secondary font-semibold">
+                      {results.rpm > maxSpindleRpm ? 'EXCEEDS CAPACITY' : 'Axis Safe'}
+                    </span>
+                  </div>
+                </Card>
 
-              {/* Metric Card 3: Material Removal Rate (MRR) */}
-              <Card className="p-space-md flex flex-col justify-between">
-                <SectionHeader 
-                  title="Material Removal Rate" 
-                  actions={<Badge variant="primary">High Efficiency</Badge>}
-                  className="border-b-0 mb-0 pb-0"
-                />
-                <div className="flex items-baseline gap-space-xs my-space-xs">
-                  <span className="font-code-lg text-[32px] leading-none font-bold text-primary-container tracking-tight">
-                    {formatMrr(results.mrr).split(' ')[0]}
-                  </span>
-                  <span className="font-label-md text-label-md font-mono text-tertiary">
-                    {isMetric ? 'cm³/min' : 'in³/min'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
-                  <span>{process === 'milling' ? `ap: ${ap}mm × ae: ${ae}mm` : `ap: ${ap || 2}mm`}</span>
-                  <span className="text-primary-container font-semibold">
-                    {Math.round((results.mrr * 60) / 1000)} dm³/hr
-                  </span>
-                </div>
-              </Card>
+                {/* 2. Feed Rate (Vf) */}
+                <Card className="p-space-md flex flex-col justify-between flex-1">
+                  <SectionHeader 
+                    title="Feed Rate (Vf)" 
+                    actions={<Badge variant="tertiary">h: {results.chipThickness}mm</Badge>}
+                    className="border-b-0 mb-0 pb-0"
+                  />
+                  <div className="flex items-baseline gap-space-xs my-space-xs">
+                    <span className="font-code-lg text-[26px] xl:text-[32px] leading-none font-bold text-on-surface tracking-tight">
+                      {isMetric ? results.feedRate.toLocaleString() : (results.feedRate / 25.4).toFixed(1)}
+                    </span>
+                    <span className="font-label-md text-label-md font-mono text-tertiary">
+                      {isMetric ? 'mm/min' : 'IPM'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
+                    <span>{process === 'milling' ? `z = ${flutes} teeth` : `Single edge`} • {(results.feedRate / 60).toFixed(1)} mm/s</span>
+                    <span className="text-on-surface">Axis Limit Safe</span>
+                  </div>
+                </Card>
 
-              {/* Metric Card 4: Spindle Torque (Mc) */}
-              <Card className="p-space-md flex flex-col justify-between">
-                <SectionHeader 
-                  title={process === 'turning' || process === 'boring' ? 'Surface Finish (Ra)' : process === 'drilling' ? 'Drill Thrust (Ff)' : 'Spindle Torque'}
-                  actions={<Badge variant="tertiary">{process === 'turning' || process === 'boring' ? 'Nose r: 0.8mm' : `Rated: ${Math.round((machineMaxKw * 9550) / 3000)} N·m`}</Badge>}
-                  className="border-b-0 mb-0 pb-0"
-                />
-                <div className="flex items-baseline gap-space-xs my-space-xs">
-                  <span className="font-code-lg text-[32px] leading-none font-bold text-on-surface tracking-tight">
-                    {process === 'turning' || process === 'boring' ? results.raUm : process === 'drilling' ? results.thrustForceN : results.torqueNm}
-                  </span>
-                  <span className="font-label-md text-label-md font-mono text-tertiary">
-                    {process === 'turning' || process === 'boring' ? 'µm Ra' : process === 'drilling' ? 'N' : isMetric ? 'N·m' : 'ft·lb'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
-                  <span>{process === 'turning' || process === 'boring' ? `Cycle: ${results.cycleTimeMin} min` : 'Low Thermal Strain'}</span>
-                  <span className="text-secondary font-semibold">
-                    {process === 'turning' || process === 'boring' ? 'Iso Finish N7' : 'Nominal'}
-                  </span>
-                </div>
-              </Card>
+                {/* 3. Spindle Torque */}
+                <Card className="p-space-md flex flex-col justify-between flex-1">
+                  <SectionHeader 
+                    title={process === 'boring' ? 'Surface Finish (Ra)' : process === 'drilling' ? 'Drill Thrust (Ff)' : 'Spindle Torque'}
+                    actions={<Badge variant="tertiary">{process === 'boring' ? 'Nose r: 0.8mm' : `Rated: ${Math.round((machineMaxKw * 9550) / 3000)} N·m`}</Badge>}
+                    className="border-b-0 mb-0 pb-0"
+                  />
+                  <div className="flex items-baseline gap-space-xs my-space-xs">
+                    <span className="font-code-lg text-[26px] xl:text-[32px] leading-none font-bold text-on-surface tracking-tight">
+                      {process === 'boring' ? results.raUm : process === 'drilling' ? results.thrustForceN : results.torqueNm}
+                    </span>
+                    <span className="font-label-md text-label-md font-mono text-tertiary">
+                      {process === 'boring' ? 'µm Ra' : process === 'drilling' ? 'N' : isMetric ? 'N·m' : 'ft·lb'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
+                    <span>{process === 'boring' ? `Cycle: ${results.cycleTimeMin} min` : 'Low Thermal Strain'}</span>
+                    <span className="text-secondary font-semibold">
+                      {process === 'boring' ? 'Iso Finish N7' : 'Nominal'}
+                    </span>
+                  </div>
+                </Card>
+
+                {/* 4. Material Removal Rate */}
+                <Card className="p-space-md flex flex-col justify-between flex-1">
+                  <SectionHeader 
+                    title="Material Removal Rate" 
+                    actions={<Badge variant="primary">High Efficiency</Badge>}
+                    className="border-b-0 mb-0 pb-0"
+                  />
+                  <div className="flex items-baseline gap-space-xs my-space-xs">
+                    <span className="font-code-lg text-[26px] xl:text-[32px] leading-none font-bold text-primary-container tracking-tight">
+                      {formatMrr(results.mrr).split(' ')[0]}
+                    </span>
+                    <span className="font-label-md text-label-md font-mono text-tertiary">
+                      {isMetric ? 'cm³/min' : 'in³/min'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between pt-space-xs text-tertiary-container font-label-sm text-label-sm font-mono">
+                    <span>{process === 'milling' ? `ap: ${ap}mm × ae: ${ae}mm` : `ap: ${ap || 2}mm`}</span>
+                    <span className="text-primary-container font-semibold">
+                      {Math.round((results.mrr * 60) / 1000)} dm³/hr
+                    </span>
+                  </div>
+                </Card>
+              </div>
             </div>
 
             {/* Tapping Rigid G-code Block Display (if tapping) */}

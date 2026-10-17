@@ -38,14 +38,14 @@ CNC Copilot adheres to a strict governing law:
 - **Structured Resolution Cards**: Displays Alarm Code, Description, Root Causes, Prescribed Recovery Actions, and Safety Warnings.
 - **Natural Intent Classification**: Conversational queries render as standard chat bubbles, while critical machine alarms trigger diagnostic cards.
 
-### 2. Cutting Physics Calculator and 3D Simulation
+### 2. Machining Calculator and 3D Simulation
 - **Deterministic Kienzle Force Engine**: Computes specific cutting force ($k_c$), tangential force ($F_c$), cutting power ($P_c$), spindle torque ($M_d$), chip thickness ($h$), and material removal rate (MRR) based on DIN standard mechanical engineering formulas.
 - **Interactive Three.js 3D Viewport**:
   - High-contrast 4-flute cutter geometry with alternating tungsten carbide and protective coatings, gold TiN inserts, and arbor drive keys rendering visible rotation at calculated spindle RPM.
-  - Process-specific tool kinematics: X-axis sweep for milling, sinusoidal plunge and retract for drilling/tapping/boring, radial/axial feed for turning.
+  - Process-specific tool kinematics: X-axis sweep for milling, sinusoidal plunge and retract for drilling/tapping/boring.
   - Dynamic chip ejection sparks reacting in real time during active tool-workpiece engagement.
   - Timeline scrubber synchronized with cut cycle progress, plus play/pause, replay reset, and 0.5x / 1.0x / 1.5x speed multipliers.
-- **5 Machining Operations**: Milling, Turning, Drilling, Tapping (with canned G84 cycle block generation), and Boring.
+- **4 Machining Operations**: Milling, Drilling, Tapping (with canned G84 cycle block generation), and Boring.
 
 ### 3. Academy (Crash Lab)
 - **Virtual 3D Machine Enclosure**: Real-time Three.js scene featuring 3-axis CNC vertical machining center with spindle, vises, clamps, and stock workpiece.

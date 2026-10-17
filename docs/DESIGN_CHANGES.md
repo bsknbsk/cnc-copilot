@@ -97,3 +97,18 @@ This document records the approved design exceptions and UI updates applied to t
    - **Change:** Wired the timeline scrubber track to the real cut cycle progress, and connected play/pause, replay (cycle reset), and speed multipliers (0.5x, 1x, 1.5x) to both spindle rotation and feed rate.
    - **Rationale:** Replaced static 65% mock progress indicator with a functional timeline tracking the simulated cut.
 
+## Approved UI Changes: Machining Calculator Heading and Layout Realignment
+
+1. **Heading Normalization and Label Removal**
+   - **Change:** Removed "Kinematic Engine: Kienzle Force V4.2" label and renamed title to "Machining Calculator" in `src/components/calculator/CuttingCalculator.tsx`.
+   - **Rationale:** Direct user request to focus the page title and eliminate technical jargon from the primary header.
+
+2. **Removal of Turning Operation and Animation**
+   - **Change:** Removed the "Turning" option from process tabs in `CuttingCalculator.tsx` and removed the corresponding turning toolpath branch in `Calculator3DView.tsx`.
+   - **Rationale:** Aligns the calculator interface with vertical and 3-axis milling/machining center workflows.
+
+3. **Enlarged 3D Viewport and Vertical Metric Sequence**
+   - **Change:** Expanded the 3D simulation widget to `min-h-[520px]` and 8-column right panel span. Reordered and stacked the 4 primary metrics vertically into sequence: (1) Spindle Speed, (2) Feed Rate, (3) Spindle Torque, and (4) Material Removal Rate alongside the 3D viewport.
+   - **Rationale:** Provides significantly greater visual canvas area for tool contact and chip geometry inspection while creating a clean, vertically balanced metrics column.
+
+

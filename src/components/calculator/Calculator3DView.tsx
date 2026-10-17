@@ -83,19 +83,13 @@ function CutterAndStock({
       toolY = 0.45;
       toolZ = 0.35;
       isCutting = true;
-    } else if (process === 'drilling' || process === 'tapping' || process === 'boring') {
-      // Plunges into workpiece block along Y and retracts
+    } else {
+      // Drilling, Tapping, Boring: plunges into workpiece block along Y and retracts
       const plunge = Math.sin(p * Math.PI);
       toolX = 0;
       toolY = 0.9 - plunge * 0.75;
       toolZ = 0;
       isCutting = plunge > 0.2;
-    } else {
-      // Turning
-      toolX = 0.8;
-      toolY = 0.1;
-      toolZ = -1.4 + p * 2.8;
-      isCutting = true;
     }
 
     if (cutterRef.current) {
@@ -238,7 +232,7 @@ export function Calculator3DView({
   };
 
   return (
-    <div className="w-full h-[280px] bg-surface-container-lowest rounded-xl relative p-space-md flex flex-col justify-between overflow-hidden shadow-xl border border-outline-variant/40">
+    <div className="w-full h-full min-h-[480px] lg:min-h-[520px] bg-surface-container-lowest rounded-xl relative p-space-md flex flex-col justify-between overflow-hidden shadow-xl border border-outline-variant/40">
       {/* Living Background Grid */}
       <div className="absolute inset-0 opacity-15 pointer-events-none">
         <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
@@ -253,9 +247,9 @@ export function Calculator3DView({
 
       {/* Viewport Top Bar */}
       <div className="relative z-10 flex items-center justify-between bg-surface-container/85 backdrop-blur-md px-space-sm py-1.5 rounded-lg shadow-sm border border-outline-variant/30">
-        <div className="flex items-center gap-space-sm">
-          <span className="w-2 h-2 rounded-full bg-secondary animate-ping"></span>
-          <span className="font-headline-sm text-sm font-bold text-on-surface">
+        <div className="flex items-center gap-space-sm min-w-0">
+          <span className="w-2 h-2 rounded-full bg-secondary animate-ping flex-shrink-0"></span>
+          <span className="font-headline-sm text-sm font-bold text-on-surface truncate">
             Simulation: Tool Contact & Chip Geometry
           </span>
         </div>

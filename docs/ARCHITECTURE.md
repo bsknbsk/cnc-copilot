@@ -172,7 +172,6 @@ The cutting calculator features an interactive Three.js viewport (`Calculator3DV
 - **Process-Specific Tool Paths**:
   - *Milling*: Translates across the workpiece block ($X = -1.6$ to $+1.6$) at engagement depth.
   - *Drilling / Tapping / Boring*: Sinusoidal plunge-and-retract cycle along the $Y$ axis.
-  - *Turning*: Radial engagement and axial traverse along the bar stock.
 - **Reactive Chip Ejection**: Particle emitter generating dynamic hot metal chip sparks with simulated parabolic trajectories and gravity when cutting edges engage stock.
 - **Synchronized Timeline Scrubber**: Directly maps to cut cycle completion percentage ($0\%$ to $100\%$) with play/pause, replay cycle reset, and $0.5\times / 1.0\times / 1.5\times$ speed multipliers.
 
