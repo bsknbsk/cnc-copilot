@@ -413,7 +413,7 @@ Decide the intent of the operator's message and answer in the matching style:
 
 Knowledge Base Manual Grounding:
 Uploaded shopfloor manuals available:
-${availableDocs.length > 0 ? availableDocs.map(d => `- ID: ${d.id} | "${d.name}" | Controller: ${d.controller || 'Generic'} | Pages: ${d.pages || 1}`).join('\n') : 'No manuals currently uploaded.'}
+${availableDocs.length > 0 ? availableDocs.map(d => `- ID: ${d.id} | "${d.name}" | Controller: ${d.controller || 'Generic'} | Total Pages: ${d.pages || 1}`).join('\n') : 'No manuals currently uploaded.'}
 
 CONTROLLER AUTO-DETECTION:
 Analyze the user message, alarm code, error text, uploaded photo, or cited manual to determine which CNC controller dialect applies:
@@ -422,13 +422,20 @@ Analyze the user message, alarm code, error text, uploaded photo, or cited manua
 - If Generic ISO G-code or standard ISO CNC syntax: set detectedController to "generic".
 - If the question does not indicate a specific controller, default detectedController to "${controller.toLowerCase().includes('mitsu') ? 'mitsubishi' : controller.toLowerCase().includes('generic') ? 'generic' : 'fanuc'}".
 
-If your answer retrieves and cites specific passages from any uploaded manual listed above, populate the citations list with the documentName, matching docId, pageNumber (if known), and snippet.
-If the requested information is not in the uploaded manuals, return an empty citations array (citations: []).
-Never claim you checked manuals, registers, sensors or telemetry unless citations are populated. Never state a confidence score.
-When resetting alarms, changing parameters or bypassing interlocks is involved, provide a concise one-line safety note in the response language.`;
+CRITICAL CITATION AND PAGE NUMBER RULES:
+1. When answering questions regarding CNC alarms, programming codes (G-codes/M-codes), parameters, or troubleshooting, search the uploaded manuals in fileSearch.
+2. For each manual reference, populate the "citations" array with:
+   - "documentName": exact name of the manual (e.g. "CNC Program Manual")
+   - "docId": the ID of the manual from the list above
+   - "pageNumber": the REAL, EXACT page number (integer) from the manual where the cited section or code appears. Do NOT cite page 1 unless the information is genuinely on page 1 of the manual.
+   - "snippet": a concise quote of the exact sentence or parameter description from the manual.
+3. If the requested information is not in the uploaded manuals, return an empty citations array (citations: []).
+4. Never claim you checked manuals, registers, sensors or telemetry unless citations are populated. Never state a confidence score.
+5. When resetting alarms, changing parameters or bypassing interlocks is involved, provide a concise one-line safety note in the response language.`;
 
   try {
     const ai = getGemini();
+    const fileSearchStore = await getFileSearchStoreName();
 
     const parts: any[] = [];
     if (base64Data) {
@@ -455,15 +462,27 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
       parts.push({ text: message || 'Analyze the machine condition.' });
     }
 
+    const genConfig: any = {
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema: agentResponseSchema,
+    };
+
+    if (fileSearchStore && availableDocs.length > 0) {
+      genConfig.tools = [
+        {
+          fileSearch: {
+            fileSearchStoreNames: [fileSearchStore],
+          },
+        },
+      ];
+    }
+
     const response = await executeWithRetry(async () => {
       return await ai.models.generateContent({
         model: MODEL_FLASH,
         contents: [{ role: 'user', parts }],
-        config: {
-          systemInstruction,
-          responseMimeType: 'application/json',
-          responseSchema: agentResponseSchema,
-        },
+        config: genConfig,
       });
     }, language);
 
@@ -489,18 +508,52 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
         detectedController = parsed.detectedController;
       }
 
-      if (Array.isArray(parsed.citations) && parsed.citations.length > 0) {
-        for (const c of parsed.citations) {
+      const groundingChunks = (response.candidates?.[0]?.groundingMetadata as any)?.groundingChunks || [];
+      const rawCitations = Array.isArray(parsed.citations) ? parsed.citations : [];
+
+      if (rawCitations.length > 0) {
+        for (const c of rawCitations) {
           const matchedDoc = availableDocs.find(
             (d) => d.id === c.docId || d.name.toLowerCase().includes((c.documentName || '').toLowerCase())
           );
-          const effectiveDocId = matchedDoc?.id || c.docId || '';
-          const pageAnchor = c.pageNumber ? `#page=${c.pageNumber}` : '';
+          const effectiveDocId = matchedDoc?.id || c.docId || (availableDocs.length > 0 ? availableDocs[0].id : '');
+          
+          let pageNum: number | null = typeof c.pageNumber === 'number' && c.pageNumber > 0 ? c.pageNumber : null;
+          
+          // Match with groundingChunks if available to get the physical PDF page number
+          if (groundingChunks.length > 0) {
+            const matchingChunk = groundingChunks.find(
+              (gc: any) =>
+                gc.retrievedContext?.title?.toLowerCase()?.includes((c.documentName || '').toLowerCase()) ||
+                (c.snippet && gc.retrievedContext?.text?.includes(c.snippet.slice(0, 30)))
+            );
+            if (matchingChunk?.retrievedContext?.pageNumber) {
+              pageNum = matchingChunk.retrievedContext.pageNumber;
+            }
+          }
+
+          const pageAnchor = pageNum ? `#page=${pageNum}` : '';
           citations.push({
             docId: effectiveDocId,
             documentName: matchedDoc?.name || c.documentName || 'OEM Manual',
-            pageNumber: c.pageNumber || null,
+            pageNumber: pageNum,
             snippet: c.snippet || '',
+            fileUrl: effectiveDocId ? `/api/kb/file/${effectiveDocId}${pageAnchor}` : null,
+          });
+        }
+      } else if (groundingChunks.length > 0 && (intent === 'diagnosis' || intent === 'general')) {
+        // Fallback: Populate citations from groundingChunks directly if model grounded its answer
+        for (const gc of groundingChunks) {
+          const title = gc.retrievedContext?.title || '';
+          const matchedDoc = availableDocs.find((d) => d.name.toLowerCase().includes(title.toLowerCase()));
+          const effectiveDocId = matchedDoc?.id || (availableDocs.length > 0 ? availableDocs[0].id : '');
+          const chunkPage = gc.retrievedContext?.pageNumber || null;
+          const pageAnchor = chunkPage ? `#page=${chunkPage}` : '';
+          citations.push({
+            docId: effectiveDocId,
+            documentName: matchedDoc?.name || title || 'OEM Manual',
+            pageNumber: chunkPage,
+            snippet: gc.retrievedContext?.text?.slice(0, 200) || '',
             fileUrl: effectiveDocId ? `/api/kb/file/${effectiveDocId}${pageAnchor}` : null,
           });
         }

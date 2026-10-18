@@ -61,6 +61,27 @@ export async function getFileSearchStoreName(): Promise<string> {
   return cachedFileSearchStoreName;
 }
 
+export function extractPdfPageCount(buffer: Buffer): number {
+  try {
+    const text = buffer.toString('latin1');
+    const countMatches = [...text.matchAll(/\/Type\s*\/Pages[^>]*?\/Count\s+(\d+)/gi)];
+    if (countMatches.length > 0) {
+      const counts = countMatches.map((m) => parseInt(m[1], 10)).filter((n) => !isNaN(n) && n > 0);
+      if (counts.length > 0) return Math.max(...counts);
+    }
+    const altMatches = [...text.matchAll(/\/Count\s+(\d+)[^>]*?\/Type\s*\/Pages/gi)];
+    if (altMatches.length > 0) {
+      const counts = altMatches.map((m) => parseInt(m[1], 10)).filter((n) => !isNaN(n) && n > 0);
+      if (counts.length > 0) return Math.max(...counts);
+    }
+    const pageMatches = text.match(/\/Type\s*\/Page(?![a-zA-Z])/g);
+    if (pageMatches && pageMatches.length > 0) return pageMatches.length;
+  } catch (err: any) {
+    console.warn(JSON.stringify({ level: 'warn', fn: 'extractPdfPageCount', error: err?.message || String(err) }));
+  }
+  return 1;
+}
+
 // Upload endpoint
 kbRouter.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (req: Request, res: Response) => {
   const user = req.user!;
@@ -86,7 +107,11 @@ kbRouter.post('/upload', requireAuth, requireAdmin, upload.single('file'), async
   const selectedController = (controller || 'Generic').trim();
   const selectedDocType = (docType || 'OEM Manual').trim();
   const selectedRefCode = (refCode || `KB-${Date.now().toString().slice(-6)}`).trim();
-  const pageCount = Number(pages) || 1;
+  let pageCount = Number(pages) || 0;
+  if (pageCount <= 0 && (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf'))) {
+    pageCount = extractPdfPageCount(file.buffer);
+  }
+  if (pageCount <= 0) pageCount = 1;
 
   const docRef = adminDb.collection('kb_docs').doc();
   const docId = docRef.id;
