@@ -260,6 +260,12 @@ const agentResponseSchema = {
         },
       },
     },
+    detectedController: {
+      type: Type.STRING,
+      enum: ['fanuc', 'mitsubishi', 'generic'],
+      nullable: true,
+      description: 'The controller dialect identified from the user query, alarm code, error text, uploaded photo, or manual citation. "fanuc" for Fanuc (e.g. 0i, SV0401, PMC), "mitsubishi" for Mitsubishi (e.g. M80, Meldas, Z70), "generic" for Generic ISO G-code.',
+    },
   },
   required: ['intent', 'answerMarkdown'],
 };
@@ -409,6 +415,13 @@ Knowledge Base Manual Grounding:
 Uploaded shopfloor manuals available:
 ${availableDocs.length > 0 ? availableDocs.map(d => `- ID: ${d.id} | "${d.name}" | Controller: ${d.controller || 'Generic'} | Pages: ${d.pages || 1}`).join('\n') : 'No manuals currently uploaded.'}
 
+CONTROLLER AUTO-DETECTION:
+Analyze the user message, alarm code, error text, uploaded photo, or cited manual to determine which CNC controller dialect applies:
+- If Fanuc (e.g., Fanuc alarms like SV0401, SP9012, 1000-series PMC alarms, Fanuc 0i, 31i, Fanuc G-code syntax): set detectedController to "fanuc".
+- If Mitsubishi (e.g., Mitsubishi M80, Meldas, M70, Mitsubishi alarm codes like Z70, Y03, EMG): set detectedController to "mitsubishi".
+- If Generic ISO G-code or standard ISO CNC syntax: set detectedController to "generic".
+- If the question does not indicate a specific controller, default detectedController to "${controller.toLowerCase().includes('mitsu') ? 'mitsubishi' : controller.toLowerCase().includes('generic') ? 'generic' : 'fanuc'}".
+
 If your answer retrieves and cites specific passages from any uploaded manual listed above, populate the citations list with the documentName, matching docId, pageNumber (if known), and snippet.
 If the requested information is not in the uploaded manuals, return an empty citations array (citations: []).
 Never claim you checked manuals, registers, sensors or telemetry unless citations are populated. Never state a confidence score.
@@ -457,6 +470,7 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
     let intent: 'greeting' | 'general' | 'diagnosis' | 'calculation' | 'gcode' = 'general';
     let answerMarkdown = '';
     const citations: any[] = [];
+    let detectedController: 'fanuc' | 'mitsubishi' | 'generic' | null = null;
     let diagnosis: {
       alarmCode: string | null;
       alarmText: string | null;
@@ -470,6 +484,10 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
       const parsed = JSON.parse(rawText);
       intent = parsed.intent || 'general';
       answerMarkdown = parsed.answerMarkdown || rawText;
+
+      if (parsed.detectedController && ['fanuc', 'mitsubishi', 'generic'].includes(parsed.detectedController)) {
+        detectedController = parsed.detectedController;
+      }
 
       if (Array.isArray(parsed.citations) && parsed.citations.length > 0) {
         for (const c of parsed.citations) {
@@ -551,17 +569,25 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
           createdAt: new Date().toISOString(),
         });
 
-        // 3. Update chat session metadata
+        // 3. Update chat session metadata with detected or active controller
+        const effectiveSessionController = detectedController === 'mitsubishi'
+          ? 'Mitsubishi M80'
+          : detectedController === 'generic'
+          ? 'Generic ISO'
+          : detectedController === 'fanuc'
+          ? 'Fanuc 0i-MF'
+          : controller;
+
         await userChatsRef.set({
           title: (message || 'Alarm Diagnostic').slice(0, 48),
-          controller,
+          controller: effectiveSessionController,
           updatedAt: new Date().toISOString(),
         }, { merge: true });
 
         // 4. Log to user activity
         await adminDb.collection('users').doc(user.uid).collection('activity').add({
           type: 'chat',
-          title: `Diagnostic: ${(message || controller).slice(0, 40)}`.slice(0, 120),
+          title: `Diagnostic: ${(message || effectiveSessionController).slice(0, 40)}`.slice(0, 120),
           summary: answerMarkdown.slice(0, 300),
           link: chatId,
           createdAt: new Date().toISOString(),
@@ -577,6 +603,7 @@ When resetting alarms, changing parameters or bypassing interlocks is involved, 
       diagnosis,
       citations,
       toolCalls,
+      detectedController,
       latencyMs,
     });
   } catch (error: any) {

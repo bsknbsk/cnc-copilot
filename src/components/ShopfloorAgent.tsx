@@ -104,6 +104,10 @@ export function ShopfloorAgent({
   const [menuOpenChatId, setMenuOpenChatId] = useState<string | null>(null);
   const [chatToDelete, setChatToDelete] = useState<ChatSession | null>(null);
 
+  // Collapsible sidebar state & PDF citation preview modal state
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [previewPdf, setPreviewPdf] = useState<{ url: string; title: string; page?: number | null } | null>(null);
+
   // Active messages state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState<boolean>(false);
@@ -464,55 +468,176 @@ export function ShopfloorAgent({
     const dateFormatted = new Date().toISOString().split('T')[0];
     const operatorName = profile?.displayName || user?.displayName || 'Operator';
 
-    let content = `# CNC Copilot Industrial Diagnostic Report\n\n`;
-    content += `- **Session Title:** ${session.title}\n`;
-    content += `- **Machine Controller:** ${session.controller}\n`;
-    content += `- **Export Date:** ${new Date().toLocaleString()}\n`;
-    content += `- **Operator:** ${operatorName}\n\n`;
-    content += `---\n\n## Diagnostic Transcript\n\n`;
+    function sanitizePdfText(str: string): string {
+      return (str || '')
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/[^\x20-\x7E]/g, ' ')
+        .replace(/\\/g, '\\\\')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)');
+    }
+
+    function wrapPdfLines(text: string, maxChars = 76): string[] {
+      const words = (text || '').split(' ');
+      const lines: string[] = [];
+      let cur = '';
+      for (const w of words) {
+        if ((cur + ' ' + w).trim().length <= maxChars) {
+          cur = (cur + ' ' + w).trim();
+        } else {
+          if (cur) lines.push(cur);
+          cur = w;
+        }
+      }
+      if (cur) lines.push(cur);
+      return lines.length ? lines : [''];
+    }
+
+    const pages: string[] = [];
+    let currentCommands: string[] = [];
+    let y = 740;
+
+    function newPage() {
+      if (currentCommands.length > 0) {
+        pages.push(currentCommands.join('\n'));
+        currentCommands = [];
+      }
+      y = 740;
+    }
+
+    function addText(text: string, x: number, size = 10, isBold = false) {
+      if (y < 60) newPage();
+      const font = isBold ? '/F2' : '/F1';
+      currentCommands.push(`BT ${font} ${size} Tf ${x} ${y} Td (${sanitizePdfText(text)}) Tj ET`);
+      y -= (size + 4);
+    }
+
+    function addRule() {
+      if (y < 60) newPage();
+      currentCommands.push(`0.5 w 50 ${y} m 562 ${y} l S`);
+      y -= 12;
+    }
+
+    // Document Header
+    addText('CNC Copilot - Industrial Diagnostic Report', 50, 16, true);
+    y -= 2;
+    addText(`Session: ${session.title}`, 50, 10, true);
+    addText(`Date: ${new Date().toLocaleString()}   |   Controller: ${session.controller}   |   Operator: ${operatorName}`, 50, 9, false);
+    y -= 4;
+    addRule();
 
     if (exportMsgs.length === 0) {
-      content += `*(No messages recorded in this diagnostic session)*\n`;
+      addText('(No messages recorded in this diagnostic session)', 50, 10, false);
     } else {
-      exportMsgs.forEach((m, idx) => {
-        const roleLabel = m.role === 'user' ? `[Operator] ${operatorName}` : `[AI Copilot] CNC Copilot Physics Engine`;
-        const timeLabel = m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : `Step ${idx + 1}`;
-        content += `### ${roleLabel} (${timeLabel})\n\n`;
-        content += `${m.text}\n\n`;
+      for (const m of exportMsgs) {
+        if (y < 90) newPage();
+        const roleLabel = m.role === 'user' ? `[OPERATOR] ${operatorName}` : '[AI COPILOT] CNC Copilot Physics Engine';
+        const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : '';
+        addText(`${roleLabel} ${timeStr ? `(${timeStr})` : ''}`, 50, 10, true);
+
+        // Content lines
+        const rawLines = (m.text || '').split('\n');
+        for (const rawLine of rawLines) {
+          const wrapped = wrapPdfLines(rawLine, 76);
+          for (const line of wrapped) {
+            addText(line, 50, 9, false);
+          }
+        }
+        y -= 4;
 
         if (m.diagnosis) {
           if (m.diagnosis.alarmCode || m.diagnosis.alarmText) {
-            content += `**Alarm:** ${m.diagnosis.alarmCode || ''} ${m.diagnosis.alarmText || ''}\n\n`;
-          }
-          if (m.diagnosis.likelyCauses && m.diagnosis.likelyCauses.length > 0) {
-            content += `**Likely Causes:**\n${m.diagnosis.likelyCauses.map((c) => `- ${c}`).join('\n')}\n\n`;
-          }
-          if (m.diagnosis.steps && m.diagnosis.steps.length > 0) {
-            content += `**Remediation Steps:**\n${m.diagnosis.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\n`;
+            addText(`Alarm: ${m.diagnosis.alarmCode || ''} ${m.diagnosis.alarmText || ''}`, 60, 9, true);
           }
           if (m.diagnosis.safetyNote) {
-            content += `> **Safety Notice:** ${m.diagnosis.safetyNote}\n\n`;
+            addText(`Safety: ${m.diagnosis.safetyNote}`, 60, 9, false);
           }
+          if (m.diagnosis.likelyCauses && m.diagnosis.likelyCauses.length > 0) {
+            addText('Likely Causes:', 60, 9, true);
+            for (const c of m.diagnosis.likelyCauses) {
+              addText(`* ${c}`, 70, 8.5, false);
+            }
+          }
+          if (m.diagnosis.steps && m.diagnosis.steps.length > 0) {
+            addText('Remediation Steps:', 60, 9, true);
+            m.diagnosis.steps.forEach((s, idx) => {
+              addText(`${idx + 1}. ${s}`, 70, 8.5, false);
+            });
+          }
+          y -= 4;
         }
 
         if (m.citations && m.citations.length > 0) {
-          content += `**Verified Citations:**\n`;
-          m.citations.forEach((c) => {
-            content += `- **${c.documentName}**${c.pageNumber ? ` (Page ${c.pageNumber})` : ''}: "${c.snippet}"\n`;
-          });
-          content += `\n`;
+          addText('Verified OEM Manual Citations:', 60, 9, true);
+          for (const c of m.citations) {
+            const pageStr = c.pageNumber ? ` (Page ${c.pageNumber})` : '';
+            const snippetWrapped = wrapPdfLines(`- ${c.documentName}${pageStr}: "${c.snippet}"`, 70);
+            for (const sLine of snippetWrapped) {
+              addText(sLine, 70, 8, false);
+            }
+          }
+          y -= 4;
         }
-        content += `---\n\n`;
-      });
+
+        addRule();
+      }
     }
 
-    content += `*Report generated by CNC Copilot v2.4 Core - AI explains. Physics decides.*\n`;
+    if (currentCommands.length > 0) {
+      pages.push(currentCommands.join('\n'));
+    }
 
-    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const totalPages = pages.length;
+    const pageObjIds: number[] = [];
+    const contentObjIds: number[] = [];
+    let currentId = 5;
+
+    for (let i = 0; i < totalPages; i++) {
+      pageObjIds.push(currentId++);
+      contentObjIds.push(currentId++);
+    }
+
+    const catalogObj = `1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj`;
+    const pagesObj = `2 0 obj\n<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${totalPages} >>\nendobj`;
+    const f1Obj = `3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj`;
+    const f2Obj = `4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj`;
+
+    const pageObjects: string[] = [];
+    for (let i = 0; i < totalPages; i++) {
+      const pageId = pageObjIds[i];
+      const contentId = contentObjIds[i];
+      const streamContent = pages[i];
+      const streamLen = new TextEncoder().encode(streamContent).length;
+
+      pageObjects.push(
+        `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>\nendobj`
+      );
+      pageObjects.push(
+        `${contentId} 0 obj\n<< /Length ${streamLen} >>\nstream\n${streamContent}\nendstream\nendobj`
+      );
+    }
+
+    const allObjs = [catalogObj, pagesObj, f1Obj, f2Obj, ...pageObjects];
+    let body = '%PDF-1.4\n';
+    const offsets: number[] = [];
+
+    for (let i = 0; i < allObjs.length; i++) {
+      offsets.push(new TextEncoder().encode(body).length);
+      body += `${allObjs[i]}\n`;
+    }
+
+    const startXref = new TextEncoder().encode(body).length;
+    let xref = `xref\n0 ${allObjs.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      xref += `${String(off).padStart(10, '0')} 00000 n \n`;
+    }
+
+    const trailer = `trailer\n<< /Size ${allObjs.length + 1} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF`;
+    const blob = new Blob([body + xref + trailer], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `CNC_Diagnostic_${session.controller.split(' ')[0]}_${titleClean}_${dateFormatted}.md`;
+    link.download = `CNC_Diagnostic_${session.controller.split(' ')[0]}_${titleClean}_${dateFormatted}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -955,6 +1080,29 @@ export function ShopfloorAgent({
 
       const data = await response.json();
 
+      // Automatically switch controller if detected and differs from active selection
+      if (data.detectedController && ['fanuc', 'mitsubishi', 'generic'].includes(data.detectedController)) {
+        const currentPref = profile?.preferredController || 'fanuc';
+        if (data.detectedController !== currentPref) {
+          const newControllerLabel =
+            data.detectedController === 'mitsubishi'
+              ? 'Mitsubishi M80'
+              : data.detectedController === 'generic'
+              ? 'Generic ISO'
+              : 'Fanuc 0i-MF';
+
+          await updatePreferences({ preferredController: data.detectedController });
+
+          setChats((prev) =>
+            prev.map((c) =>
+              c.id === targetChatId
+                ? { ...c, controller: newControllerLabel }
+                : c
+            )
+          );
+        }
+      }
+
       if (!user?.uid) {
         const assistantMsg: ChatMessage = {
           id: `resp-${Date.now()}`,
@@ -1060,20 +1208,28 @@ export function ShopfloorAgent({
   };
 
   return (
-    <div className="w-full px-margin py-margin">
+    <div className="w-full px-margin py-2">
       <div className="flex flex-col w-full">
-        <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-140px)] min-h-[680px] bg-surface-container-lowest rounded-xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-118px)] min-h-[500px] bg-surface-container-lowest rounded-xl overflow-hidden shadow-2xl">
           {/* LEFT SIDEBAR: Session Browser & Machine Selection */}
-          <aside className="w-full lg:w-80 flex-shrink-0 flex flex-col bg-surface-container-low h-full justify-between">
+          <aside className={`${isSidebarCollapsed ? 'w-0 overflow-hidden hidden' : 'w-full lg:w-80'} flex-shrink-0 flex flex-col bg-surface-container-low h-full justify-between transition-all duration-300`}>
             {/* Top Action & Search */}
             <div className="p-space-md flex flex-col gap-space-sm bg-surface-container-low/90">
-              <ButtonPrimary 
-                onClick={handleCreateNewChat}
-                icon="add_box"
-                className="w-full h-12"
-              >
-                New Session
-              </ButtonPrimary>
+              <div className="flex items-center gap-2">
+                <ButtonPrimary 
+                  onClick={handleCreateNewChat}
+                  icon="add_box"
+                  className="flex-1 h-12"
+                >
+                  New Session
+                </ButtonPrimary>
+                <IconButton
+                  icon="first_page"
+                  title="Collapse sidebar"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  className="w-10 h-10 flex-shrink-0"
+                />
+              </div>
               <div className="relative w-full flex items-center">
                 <span className="material-symbols-outlined absolute left-3 text-tertiary-container text-[18px] pointer-events-none">search</span>
                 <input 
@@ -1212,6 +1368,14 @@ export function ShopfloorAgent({
             {/* Telemetry Header Bar */}
             <header className="px-space-md py-3 bg-surface-container-low flex flex-wrap items-center justify-between gap-space-sm flex-shrink-0">
               <div className="flex items-center gap-space-md min-w-0">
+                {isSidebarCollapsed && (
+                  <IconButton
+                    icon="menu_open"
+                    title="Expand chat history"
+                    onClick={() => setIsSidebarCollapsed(false)}
+                    className="w-9 h-9 min-w-0 min-h-0 flex-shrink-0"
+                  />
+                )}
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-secondary opacity-75"></span>
@@ -1309,9 +1473,12 @@ export function ShopfloorAgent({
                             </Badge>
                           )}
                           {playingMessageId === msg.id ? (
-                            <div className="w-7 h-7 rounded bg-surface-container flex items-center justify-center p-0.5 shadow-sm animate-pulse" title="Playing answer">
-                              <div className="w-4 h-4 border-2 border-primary-container border-t-transparent rounded-full animate-spin" />
-                            </div>
+                            <IconButton
+                              icon="stop_circle"
+                              title="Stop audio"
+                              onClick={() => handlePlayAnswer(msg)}
+                              className="w-9 h-9 min-w-0 min-h-0 text-primary-container"
+                            />
                           ) : (
                             <IconButton
                               icon="volume_up"
@@ -1367,18 +1534,17 @@ export function ShopfloorAgent({
                                       ? (c.fileUrl.includes('#page=') ? c.fileUrl : `${c.fileUrl}${pageAnchor}`)
                                       : `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}${pageAnchor}`;
                                     return (
-                                      <a
+                                      <button
+                                        type="button"
                                         key={i}
-                                        href={citationHref}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
-                                        title={c.pageNumber ? `Open manual at page ${c.pageNumber} in new tab` : 'Open manual file in new tab'}
+                                        onClick={() => setPreviewPdf({ url: citationHref, title: c.documentName, page: c.pageNumber })}
+                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors cursor-pointer text-left"
+                                        title={c.pageNumber ? `Open manual at page ${c.pageNumber}` : 'Open manual file'}
                                       >
                                         <span className="material-symbols-outlined text-[14px]">menu_book</span>
                                         <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
-                                        <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
-                                      </a>
+                                        <span className="material-symbols-outlined text-[12px] opacity-70">visibility</span>
+                                      </button>
                                     );
                                   })}
                                 </div>
@@ -1489,18 +1655,17 @@ export function ShopfloorAgent({
                                     ? (c.fileUrl.includes('#page=') ? c.fileUrl : `${c.fileUrl}${pageAnchor}`)
                                     : `/api/kb/file/${encodeURIComponent(c.docId || c.documentName)}${pageAnchor}`;
                                   return (
-                                    <a
+                                    <button
+                                      type="button"
                                       key={i}
-                                      href={citationHref}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors"
-                                      title={c.pageNumber ? `Open manual at page ${c.pageNumber} in new tab` : 'Open manual file in new tab'}
+                                      onClick={() => setPreviewPdf({ url: citationHref, title: c.documentName, page: c.pageNumber })}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-secondary-container/10 hover:bg-secondary-container/20 text-secondary font-label-sm text-label-sm font-mono transition-colors cursor-pointer text-left"
+                                      title={c.pageNumber ? `Open manual at page ${c.pageNumber}` : 'Open manual file'}
                                     >
                                       <span className="material-symbols-outlined text-[14px]">menu_book</span>
                                       <span>{c.documentName}{c.pageNumber ? ` p.${c.pageNumber}` : ''}</span>
-                                      <span className="material-symbols-outlined text-[12px] opacity-70">open_in_new</span>
-                                    </a>
+                                      <span className="material-symbols-outlined text-[12px] opacity-70">visibility</span>
+                                    </button>
                                   );
                                 })}
                               </div>
@@ -1866,6 +2031,53 @@ export function ShopfloorAgent({
                 <span className="material-symbols-outlined text-[18px]">delete_forever</span>
                 <span>Delete Permanently</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Citation PDF Pop-up Modal */}
+      {previewPdf && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-5xl h-[88vh] rounded-2xl bg-surface-container border border-outline-variant shadow-2xl flex flex-col overflow-hidden">
+            <div className="h-14 px-5 bg-surface-container-high border-b border-outline-variant/40 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-2.5 truncate">
+                <span className="material-symbols-outlined text-secondary text-[22px]">menu_book</span>
+                <h3 className="font-headline-sm text-sm font-bold text-on-surface truncate">
+                  {previewPdf.title}
+                </h3>
+                {previewPdf.page && (
+                  <span className="px-2 py-0.5 rounded bg-secondary-container/20 text-secondary text-xs font-mono font-bold">
+                    Page {previewPdf.page}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewPdf.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 rounded-lg text-tertiary hover:text-on-surface hover:bg-surface-container transition-colors"
+                  title="Open in external tab"
+                >
+                  <span className="material-symbols-outlined text-[20px]">open_in_new</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewPdf(null)}
+                  className="p-2 rounded-lg text-tertiary hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+                  title="Close viewer"
+                >
+                  <span className="material-symbols-outlined text-[20px]">close</span>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 w-full bg-surface-container-lowest relative">
+              <iframe
+                src={previewPdf.url}
+                className="w-full h-full border-none"
+                title={previewPdf.title}
+              />
             </div>
           </div>
         </div>

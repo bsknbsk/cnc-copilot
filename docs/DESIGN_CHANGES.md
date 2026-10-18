@@ -206,3 +206,29 @@ This document records the approved design exceptions and UI updates applied to t
    - **Change in `src/components/academy/MissionView.tsx`:** Moved the Damage Assessment collision card from the center/bottom overlay to the top of the simulation window (`top-14`) with 60% transparent backdrop-blurred glass styling (`bg-black/60 backdrop-blur-md`).
    - **Rationale:** Prevents the popup from obstructing the 3D tool contact, workpiece stock, and coordinates during training defect simulations while keeping all defect details legible.
 
+## Approved UI Changes: Auto-Controller Switch, Collapsible History Sidebar, Compact Footer with AI Disclaimer, In-App Citation Modal, Stop TTS Audio, and PDF Export
+
+1. **Auto-Controller Detection and Global Switching**
+   - **Change in `server/routes/agent.ts` and `src/components/ShopfloorAgent.tsx`:** Added `detectedController` to Gemini response schema and system instructions to automatically recognize controller dialects (Fanuc, Mitsubishi, Generic ISO) from operator queries, alarm codes, screen photos, or manuals. When detected and differing from current preference, the agent automatically switches the controller globally via `updatePreferences`, updates chat session metadata, and preserves visibility in history.
+   - **Rationale:** Delivers frictionless controller context transitions when operators switch machines or ask machine-specific diagnostic questions.
+
+2. **Collapsible History Sidebar and Clean Chat Layout Expansion**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Added `isSidebarCollapsed` toggle with collapse button in the sidebar header and expand button in the chat header. When collapsed, the sidebar hides (`w-0 overflow-hidden hidden`) and the chat area (`flex-1`) resizes smoothly to 100% width with zero overlap.
+   - **Rationale:** Maximizes screen real estate for wide G-code blocks, diagnostic checklists, and telemetry displays.
+
+3. **Compact Universal Footer with Centered AI Disclaimer and No-Scroll Screen Fit**
+   - **Change in `src/components/ui/AppShell.tsx` and `src/components/ShopfloorAgent.tsx`:** Adjusted footer padding to `py-1.5` and added centered disclaimer "CNC Copilot is an AI and it can make mistakes" across all screens. Optimized outer agent padding to `py-2` and container height to `h-[calc(100vh-118px)] min-h-[500px]` so the entire application interface and footer fit without vertical page scrolling.
+   - **Rationale:** Eliminates page scrolling on standard shopfloor monitors and laptops while displaying essential AI transparency disclaimers.
+
+4. **In-App Citation PDF Pop-up Modal in Same Tab**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Replaced external `target="_blank"` tab navigation with an in-app pop-up viewer modal in the same tab, rendering an iframe that jumps directly to `#page={pageNumber}` with close and open-externally actions.
+   - **Rationale:** Keeps operators focused in the diagnostic workspace without leaving the active chat session tab.
+
+5. **Stop Audio Button for Active TTS Playback**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Replaced the inert spinning indicator during audio playback with an active `stop_circle` button, allowing operators to pause and stop audio playback midway.
+   - **Rationale:** Gives operators immediate control over audio playback in noisy or busy shop environments.
+
+6. **Direct PDF Export for Chat Transcripts**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Replaced markdown file download with pure-TypeScript PDF binary generation (`%PDF-1.4`) that packages the session title, controller, operator name, messages, diagnoses, and verified citations directly into a downloadable `.pdf` file without external npm dependencies.
+   - **Rationale:** Fulfills PDF export requirement strictly within the dependency freeze rule.
+

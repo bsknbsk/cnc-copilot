@@ -19,12 +19,15 @@ export function AppShell({ children, currentTab, onNavigate }: AppShellProps) {
         {children}
       </main>
 
-      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant/20 hidden xl:block">
-        <div className="w-full px-margin py-space-md flex items-center justify-between gap-space-sm font-label-sm text-label-sm text-tertiary">
-          <div className="flex items-center gap-space-sm font-mono" />
-          <div className="flex items-center gap-space-md font-mono">
+      <footer className="w-full bg-surface-container-lowest border-t border-outline-variant/20 mb-16 xl:mb-0">
+        <div className="w-full px-margin py-1.5 flex items-center justify-between gap-space-sm font-label-sm text-label-sm text-tertiary">
+          <div className="flex items-center gap-space-sm font-mono text-xs">
             <span>CORE STATUS: {user ? 'SYNCED' : 'LOCAL'}</span>
-            <span className="text-outline-variant">|</span>
+          </div>
+          <div className="text-center font-mono text-[11px] text-tertiary flex-1 mx-2 truncate">
+            CNC Copilot is an AI and it can make mistakes
+          </div>
+          <div className="flex items-center gap-space-md font-mono text-xs">
             <span className="text-on-surface-variant">© {new Date().getFullYear()} ALL RIGHTS RESERVED</span>
           </div>
         </div>
