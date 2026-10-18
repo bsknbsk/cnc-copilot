@@ -232,3 +232,21 @@ This document records the approved design exceptions and UI updates applied to t
    - **Change in `src/components/ShopfloorAgent.tsx`:** Replaced markdown file download with pure-TypeScript PDF binary generation (`%PDF-1.4`) that packages the session title, controller, operator name, messages, diagnoses, and verified citations directly into a downloadable `.pdf` file without external npm dependencies.
    - **Rationale:** Fulfills PDF export requirement strictly within the dependency freeze rule.
 
+## Approved UI Changes: Multilingual PDF Export, Gemini-Style Centered Chat Layout, Copy Chat Widget, and Visual Borders
+
+1. **Multilingual Chat PDF Export Engine**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Upgraded PDF generation engine to render pages onto an offscreen HTML5 Canvas utilizing the browser's native text shaper and fonts, and convert the rendered pages to JPEG streams (`/Filter /DCTDecode`) embedded into a compliant multi-page `%PDF-1.4` file.
+   - **Rationale:** Preserves all multilingual text (including Malayalam, Hindi, Tamil, and English) without dropping non-ASCII glyphs, while strictly complying with the zero-external-npm-dependencies constraint.
+
+2. **Gemini App Centered Design Layout for Active Chat Window**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Wrapped the diagnostic message stream and the prompt composer footer in `w-full max-w-4xl mx-auto`. When the sidebar is collapsed, the active chat window is centered in the viewport with equal spacing on the left and right (matching the Gemini app reference design). When the sidebar is expanded, the chat window smoothly realigns to the center of the remaining space, and returns when collapsed again.
+   - **Rationale:** Delivers comfortable, distraction-free reading and composing ergonomics aligned with the Gemini application layout.
+
+3. **Copy Chat Widget on Chat Bubbles**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Added copy action buttons (`content_copy` / `check`) to the header of every chat bubble (user and model) as well as within model response cards, enabling one-click copying of query text, diagnostic steps, and alarm codes to the clipboard with visual confirmation.
+   - **Rationale:** Empowers operators to quickly copy machine diagnostics, G-code snippets, and remediation instructions to their terminal or shift handover logs.
+
+4. **Visual Separation via Structural Borders**
+   - **Change in `src/components/ShopfloorAgent.tsx`:** Added distinct separation borders between major UI regions: `border-r border-outline-variant/40` on the expanded sidebar, `border-b border-outline-variant/40` on the session telemetry header, `border-t border-outline-variant/40` on the composer footer, and `border border-outline-variant/40` on the composer input container and outer shell.
+   - **Rationale:** Prevents UI elements from visually merging into each other when the sidebar is expanded.
+

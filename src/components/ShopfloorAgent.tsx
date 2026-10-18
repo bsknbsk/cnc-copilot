@@ -107,6 +107,7 @@ export function ShopfloorAgent({
   // Collapsible sidebar state & PDF citation preview modal state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [previewPdf, setPreviewPdf] = useState<{ url: string; title: string; page?: number | null } | null>(null);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   // Active messages state
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -432,6 +433,35 @@ export function ShopfloorAgent({
     }
   };
 
+  const handleCopyMessage = async (msg: ChatMessage) => {
+    try {
+      let copyText = msg.text;
+      if (msg.diagnosis) {
+        const parts = [msg.text];
+        if (msg.diagnosis.alarmCode) {
+          parts.push(`Alarm: ${msg.diagnosis.alarmCode} ${msg.diagnosis.alarmText || ''}`);
+        }
+        if (msg.diagnosis.likelyCauses && msg.diagnosis.likelyCauses.length > 0) {
+          parts.push(`Likely Causes:\n${msg.diagnosis.likelyCauses.map((c) => `- ${c}`).join('\n')}`);
+        }
+        if (msg.diagnosis.steps && msg.diagnosis.steps.length > 0) {
+          parts.push(`Remediation Steps:\n${msg.diagnosis.steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}`);
+        }
+        if (msg.diagnosis.safetyNote) {
+          parts.push(`Safety Notice: ${msg.diagnosis.safetyNote}`);
+        }
+        copyText = parts.join('\n\n');
+      }
+      await navigator.clipboard.writeText(copyText);
+      setCopiedMsgId(msg.id);
+      setTimeout(() => {
+        setCopiedMsgId((curr) => (curr === msg.id ? null : curr));
+      }, 2000);
+    } catch (err) {
+      console.warn('[ShopfloorAgent] Clipboard copy failed:', err);
+    }
+  };
+
   const handleExportChat = async (chatSession?: ChatSession | null, msgsToExport?: ChatMessage[]) => {
     const session = chatSession || activeChat;
     if (!session) return;
@@ -468,172 +498,364 @@ export function ShopfloorAgent({
     const dateFormatted = new Date().toISOString().split('T')[0];
     const operatorName = profile?.displayName || user?.displayName || 'Operator';
 
-    function sanitizePdfText(str: string): string {
-      return (str || '')
-        .replace(/[\r\n\t]+/g, ' ')
-        .replace(/[^\x20-\x7E]/g, ' ')
-        .replace(/\\/g, '\\\\')
-        .replace(/\(/g, '\\(')
-        .replace(/\)/g, '\\)');
+    // Multilingual Canvas-based PDF generator supporting Hindi, Malayalam, Tamil, English, and all UTF-8 text
+    const scale = 2; // 2x resolution for crisp high-density PDF rendering
+    const pageWidth = 612 * scale;
+    const pageHeight = 792 * scale;
+    const marginX = 40 * scale;
+    const contentWidth = pageWidth - (marginX * 2);
+
+    interface PageImageData {
+      width: number;
+      height: number;
+      bytes: Uint8Array;
     }
 
-    function wrapPdfLines(text: string, maxChars = 76): string[] {
-      const words = (text || '').split(' ');
+    const pageImages: PageImageData[] = [];
+
+    const createPage = (): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } => {
+      const c = document.createElement('canvas');
+      c.width = pageWidth;
+      c.height = pageHeight;
+      const context = c.getContext('2d')!;
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, pageWidth, pageHeight);
+      return { canvas: c, ctx: context };
+    };
+
+    let { canvas, ctx } = createPage();
+    let currentY = 50 * scale;
+
+    const drawHeader = (context: CanvasRenderingContext2D) => {
+      context.fillStyle = '#0f172a';
+      context.font = `bold ${15 * scale}px system-ui, -apple-system, sans-serif, "Noto Sans Devanagari", "Noto Sans Malayalam", "Noto Sans Tamil"`;
+      context.fillText('CNC Copilot - Industrial Diagnostic Report', marginX, 36 * scale);
+
+      context.fillStyle = '#64748b';
+      context.font = `${8 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+      context.fillText(
+        `Session: ${session.title}  |  Controller: ${session.controller}  |  Operator: ${operatorName}  |  Exported: ${new Date().toLocaleString()}`,
+        marginX,
+        48 * scale
+      );
+
+      context.strokeStyle = '#cbd5e1';
+      context.lineWidth = 1 * scale;
+      context.beginPath();
+      context.moveTo(marginX, 54 * scale);
+      context.lineTo(pageWidth - marginX, 54 * scale);
+      context.stroke();
+    };
+
+    const drawFooter = (context: CanvasRenderingContext2D, pageNum: number) => {
+      context.strokeStyle = '#e2e8f0';
+      context.lineWidth = 1 * scale;
+      context.beginPath();
+      context.moveTo(marginX, pageHeight - (36 * scale));
+      context.lineTo(pageWidth - marginX, pageHeight - (36 * scale));
+      context.stroke();
+
+      context.fillStyle = '#94a3b8';
+      context.font = `${8 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+      context.fillText('CNC Copilot v2.4 Core - AI explains. Physics decides.', marginX, pageHeight - (22 * scale));
+      context.fillText(`Page ${pageNum}`, pageWidth - marginX - (50 * scale), pageHeight - (22 * scale));
+    };
+
+    let currentPageNumber = 1;
+    drawHeader(ctx);
+    currentY = 68 * scale;
+
+    const commitPage = () => {
+      drawFooter(ctx, currentPageNumber);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.94);
+      const b64 = dataUrl.split(',')[1];
+      const binary = atob(b64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      pageImages.push({ width: pageWidth, height: pageHeight, bytes });
+      currentPageNumber++;
+      const next = createPage();
+      canvas = next.canvas;
+      ctx = next.ctx;
+      drawHeader(ctx);
+      currentY = 68 * scale;
+    };
+
+    const checkSpace = (needed: number) => {
+      if (currentY + needed > pageHeight - (50 * scale)) {
+        commitPage();
+      }
+    };
+
+    const wrapCanvasText = (context: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
       const lines: string[] = [];
-      let cur = '';
-      for (const w of words) {
-        if ((cur + ' ' + w).trim().length <= maxChars) {
-          cur = (cur + ' ' + w).trim();
-        } else {
-          if (cur) lines.push(cur);
-          cur = w;
+      const paragraphs = text.split('\n');
+      for (const para of paragraphs) {
+        if (!para.trim()) {
+          lines.push('');
+          continue;
         }
+        const words = para.split(' ');
+        let currentLine = '';
+        for (const w of words) {
+          const test = currentLine ? `${currentLine} ${w}` : w;
+          if (context.measureText(test).width <= maxWidth) {
+            currentLine = test;
+          } else {
+            if (currentLine) lines.push(currentLine);
+            if (context.measureText(w).width > maxWidth) {
+              let chunk = '';
+              for (const ch of w) {
+                if (context.measureText(chunk + ch).width <= maxWidth) {
+                  chunk += ch;
+                } else {
+                  lines.push(chunk);
+                  chunk = ch;
+                }
+              }
+              currentLine = chunk;
+            } else {
+              currentLine = w;
+            }
+          }
+        }
+        if (currentLine) lines.push(currentLine);
       }
-      if (cur) lines.push(cur);
-      return lines.length ? lines : [''];
-    }
-
-    const pages: string[] = [];
-    let currentCommands: string[] = [];
-    let y = 740;
-
-    function newPage() {
-      if (currentCommands.length > 0) {
-        pages.push(currentCommands.join('\n'));
-        currentCommands = [];
-      }
-      y = 740;
-    }
-
-    function addText(text: string, x: number, size = 10, isBold = false) {
-      if (y < 60) newPage();
-      const font = isBold ? '/F2' : '/F1';
-      currentCommands.push(`BT ${font} ${size} Tf ${x} ${y} Td (${sanitizePdfText(text)}) Tj ET`);
-      y -= (size + 4);
-    }
-
-    function addRule() {
-      if (y < 60) newPage();
-      currentCommands.push(`0.5 w 50 ${y} m 562 ${y} l S`);
-      y -= 12;
-    }
-
-    // Document Header
-    addText('CNC Copilot - Industrial Diagnostic Report', 50, 16, true);
-    y -= 2;
-    addText(`Session: ${session.title}`, 50, 10, true);
-    addText(`Date: ${new Date().toLocaleString()}   |   Controller: ${session.controller}   |   Operator: ${operatorName}`, 50, 9, false);
-    y -= 4;
-    addRule();
+      return lines;
+    };
 
     if (exportMsgs.length === 0) {
-      addText('(No messages recorded in this diagnostic session)', 50, 10, false);
+      checkSpace(40 * scale);
+      ctx.fillStyle = '#64748b';
+      ctx.font = `italic ${10 * scale}px system-ui, -apple-system, sans-serif`;
+      ctx.fillText('(No messages recorded in this diagnostic session)', marginX, currentY);
+      currentY += 24 * scale;
     } else {
       for (const m of exportMsgs) {
-        if (y < 90) newPage();
-        const roleLabel = m.role === 'user' ? `[OPERATOR] ${operatorName}` : '[AI COPILOT] CNC Copilot Physics Engine';
-        const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleTimeString() : '';
-        addText(`${roleLabel} ${timeStr ? `(${timeStr})` : ''}`, 50, 10, true);
+        checkSpace(60 * scale);
 
-        // Content lines
-        const rawLines = (m.text || '').split('\n');
-        for (const rawLine of rawLines) {
-          const wrapped = wrapPdfLines(rawLine, 76);
-          for (const line of wrapped) {
-            addText(line, 50, 9, false);
-          }
+        const isUser = m.role === 'user';
+        const roleLabel = isUser ? `OPERATOR (${operatorName})` : 'CNC COPILOT AI PHYSICS ENGINE';
+        const timeStr = m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+        // Role badge container
+        ctx.fillStyle = isUser ? '#f1f5f9' : '#f0fdf4';
+        ctx.strokeStyle = isUser ? '#cbd5e1' : '#bbf7d0';
+        ctx.lineWidth = 1 * scale;
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(marginX, currentY, contentWidth, 22 * scale, 4 * scale);
+        } else {
+          ctx.rect(marginX, currentY, contentWidth, 22 * scale);
         }
-        y -= 4;
+        ctx.fill();
+        ctx.stroke();
 
+        ctx.fillStyle = isUser ? '#334155' : '#166534';
+        ctx.font = `bold ${8.5 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+        ctx.fillText(roleLabel, marginX + (10 * scale), currentY + (15 * scale));
+
+        if (timeStr) {
+          ctx.fillStyle = '#64748b';
+          ctx.font = `${8 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+          ctx.fillText(timeStr, pageWidth - marginX - (70 * scale), currentY + (15 * scale));
+        }
+
+        currentY += 30 * scale;
+
+        // Multilingual message text lines with full Unicode/Indic support
+        ctx.fillStyle = '#0f172a';
+        ctx.font = `${9.5 * scale}px system-ui, -apple-system, "Noto Sans", "Noto Sans Devanagari", "Noto Sans Malayalam", "Noto Sans Tamil", sans-serif`;
+        const textLines = wrapCanvasText(ctx, m.text || '', contentWidth - (10 * scale));
+        for (const line of textLines) {
+          checkSpace(16 * scale);
+          if (line) {
+            ctx.fillText(line, marginX + (6 * scale), currentY);
+          }
+          currentY += 15 * scale;
+        }
+
+        // Diagnosis box if present
         if (m.diagnosis) {
+          checkSpace(40 * scale);
+          currentY += 6 * scale;
+
           if (m.diagnosis.alarmCode || m.diagnosis.alarmText) {
-            addText(`Alarm: ${m.diagnosis.alarmCode || ''} ${m.diagnosis.alarmText || ''}`, 60, 9, true);
+            checkSpace(20 * scale);
+            ctx.fillStyle = '#b91c1c';
+            ctx.font = `bold ${9 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+            ctx.fillText(
+              `ALARM: ${m.diagnosis.alarmCode || ''} ${m.diagnosis.alarmText ? `- ${m.diagnosis.alarmText}` : ''}`,
+              marginX + (12 * scale),
+              currentY
+            );
+            currentY += 16 * scale;
           }
+
           if (m.diagnosis.safetyNote) {
-            addText(`Safety: ${m.diagnosis.safetyNote}`, 60, 9, false);
+            checkSpace(24 * scale);
+            ctx.fillStyle = '#fff7ed';
+            ctx.strokeStyle = '#fdba74';
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+              ctx.roundRect(marginX + (8 * scale), currentY - (10 * scale), contentWidth - (16 * scale), 20 * scale, 4 * scale);
+            } else {
+              ctx.rect(marginX + (8 * scale), currentY - (10 * scale), contentWidth - (16 * scale), 20 * scale);
+            }
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#c2410c';
+            ctx.font = `bold ${8 * scale}px system-ui, -apple-system, sans-serif`;
+            ctx.fillText(`SAFETY: ${m.diagnosis.safetyNote}`, marginX + (14 * scale), currentY + (4 * scale));
+            currentY += 18 * scale;
           }
+
           if (m.diagnosis.likelyCauses && m.diagnosis.likelyCauses.length > 0) {
-            addText('Likely Causes:', 60, 9, true);
-            for (const c of m.diagnosis.likelyCauses) {
-              addText(`* ${c}`, 70, 8.5, false);
+            checkSpace(18 * scale);
+            ctx.fillStyle = '#334155';
+            ctx.font = `bold ${8.5 * scale}px system-ui, -apple-system, sans-serif`;
+            ctx.fillText('Likely Causes:', marginX + (12 * scale), currentY);
+            currentY += 14 * scale;
+
+            ctx.font = `${8.5 * scale}px system-ui, -apple-system, "Noto Sans", "Noto Sans Devanagari", "Noto Sans Malayalam", "Noto Sans Tamil", sans-serif`;
+            ctx.fillStyle = '#475569';
+            for (const cause of m.diagnosis.likelyCauses) {
+              const causeLines = wrapCanvasText(ctx, `* ${cause}`, contentWidth - (30 * scale));
+              for (const cLine of causeLines) {
+                checkSpace(14 * scale);
+                ctx.fillText(cLine, marginX + (16 * scale), currentY);
+                currentY += 13 * scale;
+              }
             }
           }
+
           if (m.diagnosis.steps && m.diagnosis.steps.length > 0) {
-            addText('Remediation Steps:', 60, 9, true);
-            m.diagnosis.steps.forEach((s, idx) => {
-              addText(`${idx + 1}. ${s}`, 70, 8.5, false);
+            checkSpace(18 * scale);
+            ctx.fillStyle = '#334155';
+            ctx.font = `bold ${8.5 * scale}px system-ui, -apple-system, sans-serif`;
+            ctx.fillText('Remediation Steps:', marginX + (12 * scale), currentY);
+            currentY += 14 * scale;
+
+            ctx.font = `${8.5 * scale}px system-ui, -apple-system, "Noto Sans", "Noto Sans Devanagari", "Noto Sans Malayalam", "Noto Sans Tamil", sans-serif`;
+            ctx.fillStyle = '#475569';
+            m.diagnosis.steps.forEach((step, idx) => {
+              const stepLines = wrapCanvasText(ctx, `${idx + 1}. ${step}`, contentWidth - (30 * scale));
+              for (const sLine of stepLines) {
+                checkSpace(14 * scale);
+                ctx.fillText(sLine, marginX + (16 * scale), currentY);
+                currentY += 13 * scale;
+              }
             });
           }
-          y -= 4;
         }
 
+        // Citations if present
         if (m.citations && m.citations.length > 0) {
-          addText('Verified OEM Manual Citations:', 60, 9, true);
-          for (const c of m.citations) {
-            const pageStr = c.pageNumber ? ` (Page ${c.pageNumber})` : '';
-            const snippetWrapped = wrapPdfLines(`- ${c.documentName}${pageStr}: "${c.snippet}"`, 70);
-            for (const sLine of snippetWrapped) {
-              addText(sLine, 70, 8, false);
+          checkSpace(30 * scale);
+          currentY += 6 * scale;
+          ctx.fillStyle = '#0f766e';
+          ctx.font = `bold ${8.5 * scale}px system-ui, -apple-system, monospace, sans-serif`;
+          ctx.fillText('VERIFIED OEM MANUAL CITATIONS:', marginX + (12 * scale), currentY);
+          currentY += 14 * scale;
+
+          ctx.font = `${8 * scale}px system-ui, -apple-system, "Noto Sans", "Noto Sans Devanagari", "Noto Sans Malayalam", "Noto Sans Tamil", sans-serif`;
+          ctx.fillStyle = '#334155';
+          for (const cite of m.citations) {
+            const pageStr = cite.pageNumber ? ` (Page ${cite.pageNumber})` : '';
+            const citeText = `* ${cite.documentName}${pageStr}: "${cite.snippet}"`;
+            const citeLines = wrapCanvasText(ctx, citeText, contentWidth - (30 * scale));
+            for (const cl of citeLines) {
+              checkSpace(13 * scale);
+              ctx.fillText(cl, marginX + (16 * scale), currentY);
+              currentY += 12 * scale;
             }
           }
-          y -= 4;
         }
 
-        addRule();
+        currentY += 14 * scale;
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 0.5 * scale;
+        ctx.beginPath();
+        ctx.moveTo(marginX, currentY);
+        ctx.lineTo(pageWidth - marginX, currentY);
+        ctx.stroke();
+        currentY += 14 * scale;
       }
     }
 
-    if (currentCommands.length > 0) {
-      pages.push(currentCommands.join('\n'));
-    }
+    commitPage();
 
-    const totalPages = pages.length;
+    // Assemble valid %PDF-1.4 binary file with DCTDecode images
+    const pdfChunks: Uint8Array[] = [];
+    const objOffsets: number[] = [];
+    let currentByteOffset = 0;
+
+    const pushAscii = (str: string) => {
+      const bytes = new TextEncoder().encode(str);
+      pdfChunks.push(bytes);
+      currentByteOffset += bytes.length;
+    };
+
+    const pushBytes = (bytes: Uint8Array) => {
+      pdfChunks.push(bytes);
+      currentByteOffset += bytes.length;
+    };
+
+    pushAscii('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+
+    const totalPages = pageImages.length;
     const pageObjIds: number[] = [];
+    const imgObjIds: number[] = [];
     const contentObjIds: number[] = [];
-    let currentId = 5;
+    let nextId = 3;
 
     for (let i = 0; i < totalPages; i++) {
-      pageObjIds.push(currentId++);
-      contentObjIds.push(currentId++);
+      pageObjIds.push(nextId++);
+      imgObjIds.push(nextId++);
+      contentObjIds.push(nextId++);
     }
 
-    const catalogObj = `1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj`;
-    const pagesObj = `2 0 obj\n<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${totalPages} >>\nendobj`;
-    const f1Obj = `3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj`;
-    const f2Obj = `4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj`;
+    objOffsets.push(currentByteOffset);
+    pushAscii('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
 
-    const pageObjects: string[] = [];
+    objOffsets.push(currentByteOffset);
+    pushAscii(`2 0 obj\n<< /Type /Pages /Kids [${pageObjIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${totalPages} >>\nendobj\n`);
+
     for (let i = 0; i < totalPages; i++) {
       const pageId = pageObjIds[i];
+      const imgId = imgObjIds[i];
       const contentId = contentObjIds[i];
-      const streamContent = pages[i];
-      const streamLen = new TextEncoder().encode(streamContent).length;
+      const img = pageImages[i];
 
-      pageObjects.push(
-        `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>\nendobj`
+      objOffsets.push(currentByteOffset);
+      pushAscii(
+        `${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 ${imgId} 0 R >> >> /Contents ${contentId} 0 R >>\nendobj\n`
       );
-      pageObjects.push(
-        `${contentId} 0 obj\n<< /Length ${streamLen} >>\nstream\n${streamContent}\nendstream\nendobj`
+
+      objOffsets.push(currentByteOffset);
+      pushAscii(
+        `${imgId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${img.bytes.length} >>\nstream\n`
       );
+      pushBytes(img.bytes);
+      pushAscii('\nendstream\nendobj\n');
+
+      const contentStr = 'q 612 0 0 792 0 0 cm /Im1 Do Q\n';
+      objOffsets.push(currentByteOffset);
+      pushAscii(`${contentId} 0 obj\n<< /Length ${contentStr.length} >>\nstream\n${contentStr}endstream\nendobj\n`);
     }
 
-    const allObjs = [catalogObj, pagesObj, f1Obj, f2Obj, ...pageObjects];
-    let body = '%PDF-1.4\n';
-    const offsets: number[] = [];
-
-    for (let i = 0; i < allObjs.length; i++) {
-      offsets.push(new TextEncoder().encode(body).length);
-      body += `${allObjs[i]}\n`;
+    const startXrefOffset = currentByteOffset;
+    const totalObjs = objOffsets.length;
+    pushAscii(`xref\n0 ${totalObjs + 1}\n0000000000 65535 f \n`);
+    for (const off of objOffsets) {
+      pushAscii(`${String(off).padStart(10, '0')} 00000 n \n`);
     }
+    pushAscii(`trailer\n<< /Size ${totalObjs + 1} /Root 1 0 R >>\nstartxref\n${startXrefOffset}\n%%EOF\n`);
 
-    const startXref = new TextEncoder().encode(body).length;
-    let xref = `xref\n0 ${allObjs.length + 1}\n0000000000 65535 f \n`;
-    for (const off of offsets) {
-      xref += `${String(off).padStart(10, '0')} 00000 n \n`;
-    }
-
-    const trailer = `trailer\n<< /Size ${allObjs.length + 1} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF`;
-    const blob = new Blob([body + xref + trailer], { type: 'application/pdf' });
+    const blob = new Blob(pdfChunks as any, { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1210,9 +1432,9 @@ export function ShopfloorAgent({
   return (
     <div className="w-full px-margin py-2">
       <div className="flex flex-col w-full">
-        <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-118px)] min-h-[500px] bg-surface-container-lowest rounded-xl overflow-hidden shadow-2xl">
+        <div className="flex flex-col lg:flex-row w-full h-[calc(100vh-118px)] min-h-[500px] bg-surface-container-lowest rounded-xl overflow-hidden shadow-2xl border border-outline-variant/40">
           {/* LEFT SIDEBAR: Session Browser & Machine Selection */}
-          <aside className={`${isSidebarCollapsed ? 'w-0 overflow-hidden hidden' : 'w-full lg:w-80'} flex-shrink-0 flex flex-col bg-surface-container-low h-full justify-between transition-all duration-300`}>
+          <aside className={`${isSidebarCollapsed ? 'w-0 overflow-hidden hidden' : 'w-full lg:w-80 border-r border-outline-variant/40'} flex-shrink-0 flex flex-col bg-surface-container-low h-full justify-between transition-all duration-300`}>
             {/* Top Action & Search */}
             <div className="p-space-md flex flex-col gap-space-sm bg-surface-container-low/90">
               <div className="flex items-center gap-2">
@@ -1366,7 +1588,7 @@ export function ShopfloorAgent({
           {/* RIGHT/MAIN: Interactive Diagnostic Stream */}
           <section className="flex-1 flex flex-col h-full bg-surface-container-lowest min-w-0">
             {/* Telemetry Header Bar */}
-            <header className="px-space-md py-3 bg-surface-container-low flex flex-wrap items-center justify-between gap-space-sm flex-shrink-0">
+            <header className="px-space-md py-3 bg-surface-container-low flex flex-wrap items-center justify-between gap-space-sm flex-shrink-0 border-b border-outline-variant/40">
               <div className="flex items-center gap-space-md min-w-0">
                 {isSidebarCollapsed && (
                   <IconButton
@@ -1412,7 +1634,8 @@ export function ShopfloorAgent({
             </header>
 
             {/* Message History Container */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6 scrollbar-thin scrollbar-thumb-surface-container-high">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 scrollbar-thin scrollbar-thumb-surface-container-high">
+              <div className="w-full max-w-4xl mx-auto space-y-6 flex flex-col min-h-full">
               {/* Day / Mode Separator */}
               <div className="flex items-center justify-center my-2">
                 <div className="px-3 py-1 rounded-full bg-surface-container text-tertiary-container font-label-sm text-label-sm font-mono uppercase">
@@ -1458,7 +1681,7 @@ export function ShopfloorAgent({
               ) : (
                 messages.map((msg) => (
                   <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end ml-auto max-w-2xl' : 'items-start mr-auto max-w-4xl'} w-full`}>
-                    <div className="flex items-center gap-2 mb-1.5">
+                    <div className={`flex items-center gap-2 mb-1.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <span className="font-label-sm text-label-sm text-tertiary font-mono">
                         {msg.role === 'user' ? (profile?.displayName || 'Operator') : 'CNC Copilot Physics Engine'}
                       </span>
@@ -1477,18 +1700,24 @@ export function ShopfloorAgent({
                               icon="stop_circle"
                               title="Stop audio"
                               onClick={() => handlePlayAnswer(msg)}
-                              className="w-9 h-9 min-w-0 min-h-0 text-primary-container"
+                              className="w-7 h-7 min-w-0 min-h-0 text-primary-container"
                             />
                           ) : (
                             <IconButton
                               icon="volume_up"
                               title="Play answer"
                               onClick={() => handlePlayAnswer(msg)}
-                              className="w-9 h-9 min-w-0 min-h-0"
+                              className="w-7 h-7 min-w-0 min-h-0"
                             />
                           )}
                         </>
                       )}
+                      <IconButton
+                        icon={copiedMsgId === msg.id ? 'check' : 'content_copy'}
+                        title={copiedMsgId === msg.id ? 'Copied to clipboard' : 'Copy chat'}
+                        onClick={() => handleCopyMessage(msg)}
+                        className={`w-7 h-7 min-w-0 min-h-0 ${copiedMsgId === msg.id ? 'text-secondary' : 'text-tertiary hover:text-on-surface'}`}
+                      />
                     </div>
 
                     {msg.role === 'user' ? (
@@ -1577,6 +1806,18 @@ export function ShopfloorAgent({
                                   </div>
                                 </details>
                               )}
+
+                              <div className="pt-2 flex items-center gap-2 border-t border-surface-container/40">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopyMessage(msg)}
+                                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded hover:bg-surface-container text-tertiary hover:text-on-surface font-label-sm text-label-sm font-mono transition-colors cursor-pointer"
+                                  title="Copy chat message"
+                                >
+                                  <span className="material-symbols-outlined text-[16px]">{copiedMsgId === msg.id ? 'check' : 'content_copy'}</span>
+                                  <span>{copiedMsgId === msg.id ? 'Copied' : 'Copy'}</span>
+                                </button>
+                              </div>
                             </div>
                           );
                         }
@@ -1699,6 +1940,18 @@ export function ShopfloorAgent({
                                 </div>
                               </details>
                             )}
+
+                            <div className="pt-2 flex items-center gap-2 border-t border-surface-container/40">
+                              <button
+                                type="button"
+                                onClick={() => handleCopyMessage(msg)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded hover:bg-surface-container text-tertiary hover:text-on-surface font-label-sm text-label-sm font-mono transition-colors cursor-pointer"
+                                title="Copy chat message"
+                              >
+                                <span className="material-symbols-outlined text-[16px]">{copiedMsgId === msg.id ? 'check' : 'content_copy'}</span>
+                                <span>{copiedMsgId === msg.id ? 'Copied' : 'Copy'}</span>
+                              </button>
+                            </div>
                           </div>
                         );
                       })()
@@ -1724,11 +1977,13 @@ export function ShopfloorAgent({
               )}
 
               <div ref={messagesEndRef} />
+              </div>
             </div>
 
             {/* Sticky Shopfloor Composer Area */}
-            <footer className="p-3 sm:p-4 bg-surface-container-low flex flex-col gap-2 flex-shrink-0">
-              <div className="bg-surface-container-lowest rounded-xl p-3 flex flex-col gap-2 focus-within:ring-1 focus-within:ring-primary shadow-inner">
+            <footer className="p-3 sm:p-4 bg-surface-container-low flex flex-col gap-2 flex-shrink-0 border-t border-outline-variant/40">
+              <div className="w-full max-w-4xl mx-auto flex flex-col gap-2">
+                <div className="bg-surface-container-lowest rounded-xl p-3 flex flex-col gap-2 focus-within:ring-1 focus-within:ring-primary shadow-inner border border-outline-variant/40">
                 <textarea 
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
@@ -1911,6 +2166,7 @@ export function ShopfloorAgent({
                   <span className="hidden sm:inline">•</span>
                   <span className="hidden sm:inline">[Shift + Enter] Line Break</span>
                 </div>
+              </div>
               </div>
             </footer>
           </section>
