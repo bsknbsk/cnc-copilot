@@ -62,7 +62,7 @@ function simulateProgram(program: string, missionPitch?: number): {
   return { crashEvent, findings: parseResult.findings };
 }
 
-describe('Academy Mission Collision Engine', () => {
+describe('Academy Mission Collision Engine- for the Academy Page', () => {
   it('Mission 1 (missing-offset): broken program produces VISE_CRASH first', () => {
     const mission = ACADEMY_MISSIONS.find((m) => m.id === 'missing-offset')!;
     expect(mission).toBeDefined();
